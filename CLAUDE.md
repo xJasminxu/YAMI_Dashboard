@@ -4,9 +4,12 @@
 
 Digitalisierung der Bestellaufnahme in einem Restaurant. Ersetzt Zettel & Stift für den
 Weg Bedienung → Küche/Bar. **Kein** Zusammenhang mit dem bestehenden Kassensystem — diese
-App macht keine Preise, keine Rechnungen, keine Zahlungen. Sie sorgt nur dafür, dass eine
-aufgenommene Bestellung sofort und übersichtlich bei Küche bzw. Bar ankommt, auf Chinesisch
-(Hanzi, primär) mit Deutsch (sekundär), weil die Küchenmitarbeiter kein Deutsch sprechen.
+App macht keine Rechnungen und keine Zahlungen, das bleibt Aufgabe der Kasse. Preise werden
+seit Kurzem als Referenz für Bedienung/Gäste in der Bestellaufnahme angezeigt (siehe
+Datenmodell), aber nicht auf den Küchen-/Bar-Tickets — dort zählt nur, was zubereitet werden
+muss. Die App sorgt vor allem dafür, dass eine aufgenommene Bestellung sofort und
+übersichtlich bei Küche bzw. Bar ankommt, auf Chinesisch (Hanzi, primär) mit Deutsch
+(sekundär), weil die Küchenmitarbeiter kein Deutsch sprechen.
 
 Aktuelles Problem, das gelöst wird: Bestellungen werden auf Papier aufgenommen, dann manuell
 in einer Kasse eingetippt, die nicht an die aktuelle Speisekarte angepasst ist → doppelte
@@ -22,7 +25,7 @@ Arbeit, Fehleranfälligkeit, keine Übersicht für die Küche, keine chinesische
 - **State/Data-Fetching:** Supabase JS Client + Realtime-Channel-Subscriptions, kein
   zusätzliches State-Management-Framework nötig (Datenmenge ist klein).
 
-## Architekturprinzip: eine Codebase, drei/vier Rollen
+## Architekturprinzip: eine Codebase, fünf Rollen
 
 Kein separates Repo pro Gerät. Eine App, beim Start (oder per Einstellung) wählt man die
 Rolle des Geräts:
@@ -31,8 +34,15 @@ Rolle des Geräts:
    Bestellung abschicken.
 2. **Küche** — zeigt nur Items mit `target_device = 'kitchen'`.
 3. **Bar** — zeigt nur Items mit `target_device = 'bar'`.
-4. **Status** (optional, für Bedienungen) — Übersicht aller offenen Tische mit Fortschritt
-   (z.B. "Tisch 4: 2/5 fertig"), gespeist aus denselben Realtime-Daten wie Küche/Bar.
+4. **Status** (optional, für Bedienungen) — Übersicht aller **offenen** Tische mit
+   Fortschritt (z.B. "Tisch 4: 2/5 fertig"), gespeist aus denselben Realtime-Daten wie
+   Küche/Bar.
+5. **Tischübersicht** (für Bedienungen) — Übersicht **aller** Tische mit Bestellungen von
+   heute (auch bereits fertige, anders als Status — die werden ja gerade erst abgerechnet).
+   Tippen auf einen Tisch öffnet die Bestellübersicht mit vorläufiger Abrechnung: einzelne
+   Positionen sind per Checkbox auswählbar (z.B. für getrennte Rechnungen), die Summe der
+   Auswahl wird live berechnet. Rein zur Orientierung für die Bedienung — es wird nichts
+   gebucht oder gespeichert; die verbindliche Rechnung druckt weiterhin die Kasse.
 
 Rollenwahl bestimmt nur Filter + Sortierung + UI-Layout, nicht das Datenmodell.
 
@@ -49,10 +59,12 @@ Essen
  - Korean BBQ
 
 Getränke
- - Softgetränke  
+ - Alkoholfreie Getränke
  - Bier
  - Cocktails
- - alkoholfreie Cocktails
+ - Spirituosen
+ - Schnaps
+ - Kaffee/Matcha
 
 Nachspeisen
  - Mochi Eis
@@ -75,8 +87,10 @@ und tragen zusätzlich Name auf Hanzi (primär) und Deutsch (sekundär).
 (Diese Gruppierung ist eine Annahme basierend auf der Kategorienliste — mit Nutzer
 gegenchecken, insbesondere ob "suppen" wirklich als Vorspeise gilt.)
 
-**Bar:** Softgetränke → Bier → Cocktails → Spirituosen → Kaffee/Matcha → Nachspeise
-(siehe offene Frage oben zu Softgetränke/Bier)
+**Bar:** Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Schnaps → Kaffee/Matcha
+→ Nachspeise (Mochi Eis → Eis → Eisschnee). "Schnaps" (Soju/Makgeolli) ist direkt nach
+Spirituosen einsortiert — war in der ursprünglichen Anforderung nicht spezifiziert, bei
+Bedarf Position anpassen.
 
 Sortierung ist rein `sort_order`-Feld auf der `categories`-Tabelle, client-seitig angewendet.
 Kein Backend-Logik nötig.
@@ -96,16 +110,54 @@ Kein Backend-Logik nötig.
 Wichtig: Küche und Bar haben unabhängige "fertig"-Zustände für dieselbe Bestellung (ein Tisch
 kann in der Küche fertig sein, an der Bar aber noch nicht, oder umgekehrt).
 
+## Tagesabschluss
+
+Button auf dem Rollenauswahl-Screen (mit Bestätigungsdialog, da destruktiv). Löscht per
+`delete` auf `orders` alle Bestellungen des Tages — `order_items` hängt per `on delete cascade`
+daran und wird automatisch mitgelöscht. `categories`, `menu_items` und `tables` bleiben
+unangetastet. Setzt damit Küche/Bar/Status wieder auf "keine offenen Bestellungen" zurück,
+ohne die Speisekarte neu einspielen zu müssen.
+
 ## Datenmodell
 
 Siehe `supabase/schema.sql` für die vollständige Definition. Kurzfassung:
 
 - `categories` — name_hanzi, name_de, menu_group (essen/getraenke/nachspeisen), target_device
   (kitchen/bar), sort_order
-- `menu_items` — category_id, name_hanzi, name_de, active
+- `menu_items` — category_id, name_hanzi, name_de, item_code (optional, von der
+  gedruckten Speisekarte, z.B. "R1"), active, price (Referenzpreis in Euro, optional —
+  null bei Items ohne hinterlegten Preis oder wenn der Preis von der Variante abhängt),
+  variant_options (Pflichtauswahl beim Bestellen, z.B. Rind/Huhn), extra_options
+  (optionale Extras mit +/- Menge im selben Dialog, z.B. bei Ajitama-Ramen)
 - `tables` — number
 - `orders` — table_id, created_at
-- `order_items` — order_id, menu_item_id, status (offen/fertig), created_at, done_at
+- `order_items` — order_id, menu_item_id, status (offen/fertig), variant_hanzi/variant_de
+  (gewählte Variante), extras (gewählte Extras + Menge + Preis), unit_price (Preis-Snapshot
+  der Grundposition zum Bestellzeitpunkt, siehe unten), note (Freitext der Bedienung),
+  created_at, done_at
+
+Modifier-Konzept (Varianten + Extras): manche `menu_items` verlangen beim Bestellen eine
+Dialog-Auswahl statt direkt in den Warenkorb zu wandern. `variant_options` ist eine Pflicht-
+Einfachauswahl (z.B. Rind/Huhn, oder 4/8 Stück bei Fried Chicken), `extra_options` sind
+optionale Zusatz-Items mit +/- Menge (z.B. Ajitama Eier, Mais). Beides wird als JSON auf dem
+`menu_items`-Eintrag gepflegt; die getroffene Auswahl landet 1:1 auf der zugehörigen
+`order_items`-Zeile (nicht als eigene Zeilen), damit Küche/Bar Variante und Extras direkt
+neben dem Gericht sehen. Sowohl `variant_options`- als auch `extra_options`-Einträge können
+zusätzlich ein `price`-Feld tragen (z.B. Fried Chicken: 4 Stück / 8 Stück haben je einen
+eigenen Preis) — dann bleibt `menu_items.price` selbst null, weil der Preis erst durch die
+Variante feststeht.
+
+Preise sind reine Referenz in der Bestellaufnahme (Item-Liste, Auswahl-Dialoge, Warenkorb
+mit Zeilen- und Gesamtsumme) sowie in der Tischübersicht (vorläufige Abrechnung, siehe oben)
+— es gibt keine Rechnungsstellung, keine Zahlungsabwicklung und keine Anzeige von Preisen auf
+den Küchen-/Bar-Tickets.
+
+Preis-Snapshot: `order_items.unit_price` und die `price`-Felder in `order_items.extras`
+speichern den Preis zum Zeitpunkt der Bestellung, statt ihn live aus `menu_items` zu lesen.
+Grund: eine spätere Preisänderung an der Speisekarte darf nicht rückwirkend die vorläufige
+Abrechnung bereits laufender/vergangener Bestellungen verändern. Für Bestellungen, die vor
+Einführung dieses Snapshots angelegt wurden, fällt die Tischübersicht auf `menu_items.price`
+zurück.
 
 Keine Preise, keine Nutzer-/Auth-Tabellen im ersten Wurf (Geräte sind vertrauenswürdig,
 kein Login nötig für v1).
@@ -124,10 +176,16 @@ kein Login nötig für v1).
 6. Bar-Screen: gleiche Mechanik, andere Kategorien/Sortierung.
 7. "Vergangene Bestellungen"-Ansichten für Küche und Bar.
 8. (Optional) Status-Screen für Bedienungen.
+9. Tischübersicht + vorläufige Abrechnung pro Tisch (Positionen per Checkbox auswählbar,
+   Summe live berechnet).
 
 ## Nicht-Ziele (bewusst weggelassen für v1)
 
-- Keine Kassenintegration, keine Preise, keine Zahlungen
+- Keine Kassenintegration, keine Rechnungsstellung, keine Zahlungen (Preise werden seit
+  Kurzem nur zu Referenzzwecken in der Bestellaufnahme und der Tischübersicht angezeigt,
+  siehe Datenmodell). Auch die "vorläufige Abrechnung" in der Tischübersicht ist reine
+  Anzeige/Berechnung im Client — es wird nichts gebucht, gedruckt oder gespeichert; die
+  verbindliche Rechnung erstellt weiterhin die Kasse.
 - Kein Nutzer-Login/Rollen-Auth (kann später ergänzt werden)
 - Keine Offline-Fähigkeit in v1 (spätere Überlegung: lokaler Server statt Cloud-Supabase,
   falls Internetverbindung im Restaurant unzuverlässig ist)

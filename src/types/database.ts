@@ -1,0 +1,75 @@
+// Spiegelt supabase/schema.sql. Bei Schema-Änderungen synchron halten.
+
+export type MenuGroup = 'essen' | 'getraenke' | 'nachspeisen';
+export type TargetDevice = 'kitchen' | 'bar';
+export type OrderItemStatus = 'offen' | 'fertig';
+
+export interface Category {
+  id: string;
+  name_hanzi: string;
+  name_de: string;
+  menu_group: MenuGroup;
+  target_device: TargetDevice;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface VariantOption {
+  name_hanzi: string;
+  name_de: string;
+  price?: number;
+}
+
+export interface ExtraOption {
+  name_hanzi: string;
+  name_de: string;
+  price?: number;
+}
+
+export interface SelectedExtra {
+  name_hanzi: string;
+  name_de: string;
+  quantity: number;
+  price: number | null;
+}
+
+export interface MenuItem {
+  id: string;
+  category_id: string;
+  name_hanzi: string | null;
+  name_de: string;
+  item_code: string | null;
+  active: boolean;
+  price: number | null;
+  variant_options: VariantOption[] | null;
+  extra_options: ExtraOption[] | null;
+  is_custom_entry: boolean;
+  created_at: string;
+}
+
+export interface RestaurantTable {
+  id: string;
+  number: number;
+}
+
+export interface Order {
+  id: string;
+  table_id: string;
+  created_at: string;
+}
+
+export interface OrderItem {
+  id: string;
+  order_id: string;
+  menu_item_id: string;
+  status: OrderItemStatus;
+  variant_hanzi: string | null;
+  variant_de: string | null;
+  extras: SelectedExtra[] | null;
+  // Preis-Snapshot zum Bestellzeitpunkt (siehe schema.sql), für die vorläufige
+  // Abrechnung in der Tischübersicht. Bei Items ohne hinterlegten Preis null.
+  unit_price: number | null;
+  note: string | null;
+  created_at: string;
+  done_at: string | null;
+}
