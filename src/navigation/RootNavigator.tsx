@@ -2,6 +2,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import ThemeToggleButton from '../components/ThemeToggleButton';
 import RoleSelectScreen from '../screens/RoleSelectScreen';
 import OrderScreen from '../screens/order/OrderScreen';
+import PdfViewerScreen from '../screens/order/PdfViewerScreen';
 import KitchenScreen from '../screens/kitchen/KitchenScreen';
 import BarScreen from '../screens/bar/BarScreen';
 import StatusScreen from '../screens/status/StatusScreen';
@@ -20,6 +21,7 @@ export default function RootNavigator() {
     >
       <Stack.Screen name="RoleSelect" component={RoleSelectScreen} options={{ title: 'Hauptmenü' }} />
       <Stack.Screen name="Order" component={OrderScreen} options={{ title: 'Bestellung' }} />
+      <Stack.Screen name="PdfViewer" component={PdfViewerScreen} options={{ title: 'Dokument' }} />
       <Stack.Screen name="Kitchen" component={KitchenScreen} options={{ title: 'Küche' }} />
       <Stack.Screen name="Bar" component={BarScreen} options={{ title: 'Bar' }} />
       <Stack.Screen name="Status" component={StatusScreen} options={{ title: 'Status' }} />

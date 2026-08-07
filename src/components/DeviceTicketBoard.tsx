@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDeviceOrders, type GroupedOrder } from '../hooks/useDeviceOrders';
 import { useNewOrderChime } from '../hooks/useNewOrderChime';
 import type { KitchenStation, OrderItemStatus, TargetDevice } from '../types/database';
@@ -9,6 +10,12 @@ import { useThemedStyles } from '../theme/useThemedStyles';
 
 type Tab = 'offen' | 'fertig';
 type BoardStyles = ReturnType<typeof createStyles>;
+
+// Eigener Key pro Gerät (Küche/Bar), falls dasselbe Tablet doch mal die Rolle wechselt —
+// die Stumm-Einstellung der Küche soll dann nicht ungefragt auch für die Bar gelten.
+function soundEnabledStorageKey(targetDevice: TargetDevice) {
+  return `yami:sound-enabled:${targetDevice}`;
+}
 
 // neu = noch nichts abgehakt, angefangen = teilweise fertig, fertig = alles abgehakt.
 type OrderProgress = 'neu' | 'angefangen' | 'fertig';
@@ -66,11 +73,30 @@ export default function DeviceTicketBoard({
   const cardBackground = useMemo(() => cardBackgroundFor(colors), [colors]);
   const { orders, loading, error, setItemStatus } = useDeviceOrders(targetDevice);
   const [tab, setTab] = useState<Tab>('offen');
-  // Standardmäßig an — Köche/Bar können den Ton per Glocken-Button stumm
-  // schalten (z.B. während einer Pause). Zustand ist rein lokal (pro
-  // Bildschirm/App-Start), keine Persistierung in v1.
+  // Standardmäßig an — Küche/Bar können den Ton per Glocken-Button stumm schalten
+  // (z.B. während einer Pause). Wird in AsyncStorage gemerkt, damit die Einstellung
+  // erhalten bleibt, wenn die App in den Hintergrund/Task-Wechsel geht oder neu
+  // startet, statt bei jedem Neu-Mounten wieder auf "an" zurückzuspringen.
   const [soundEnabled, setSoundEnabled] = useState(true);
   useNewOrderChime(orders, soundEnabled);
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(soundEnabledStorageKey(targetDevice)).then((stored) => {
+      if (!cancelled && stored !== null) setSoundEnabled(stored === '1');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetDevice]);
+
+  function toggleSound() {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem(soundEnabledStorageKey(targetDevice), next ? '1' : '0');
+      return next;
+    });
+  }
 
   const { open, done } = useMemo(() => {
     const open = orders.filter((order) => order.items.some((item) => item.status === 'offen'));
@@ -124,7 +150,7 @@ export default function DeviceTicketBoard({
         </View>
         <TouchableOpacity
           style={[styles.bellButton, large && styles.bellButtonLarge]}
-          onPress={() => setSoundEnabled((v) => !v)}
+          onPress={toggleSound}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Text style={[styles.bellButtonText, large && styles.bellButtonTextLarge]}>

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import type { RootStackParamList } from '../../navigation/types';
@@ -14,6 +14,27 @@ interface TableRow {
   total: number;
   done: number;
   openItems: DeviceOrderItem[];
+}
+
+interface RecentlyDoneEntry {
+  id: string;
+  tableNumber: number;
+  doneAt: string;
+  item: DeviceOrderItem;
+}
+
+const RECENTLY_DONE_LIMIT = 7;
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+}
+
+// Hanzi ist primär für die Küche — Getränke/Nachspeisen haben keins (siehe
+// OrderScreen.tsx/DeviceTicketBoard.tsx), dann reicht der deutsche Name allein.
+function dishLabel(item: DeviceOrderItem): string {
+  const { name_hanzi, name_de, item_code } = item.menu_item;
+  const code = item_code ? `${item_code} · ` : '';
+  return name_hanzi ? `${code}${name_hanzi} (${name_de})` : `${code}${name_de}`;
 }
 
 // Übersicht aller offenen Tische mit Fortschritt, gespeist aus denselben
@@ -45,6 +66,22 @@ export default function StatusScreen({ navigation }: Props) {
       .sort((a, b) => a.tableNumber - b.tableNumber);
   }, [kitchen.orders, bar.orders]);
 
+  const recentlyDone = useMemo(() => {
+    const entries: RecentlyDoneEntry[] = [];
+
+    for (const order of [...kitchen.orders, ...bar.orders]) {
+      for (const item of order.items) {
+        if (item.status === 'fertig' && item.done_at) {
+          entries.push({ id: item.id, tableNumber: order.table.number, doneAt: item.done_at, item });
+        }
+      }
+    }
+
+    return entries
+      .sort((a, b) => new Date(b.doneAt).getTime() - new Date(a.doneAt).getTime())
+      .slice(0, RECENTLY_DONE_LIMIT);
+  }, [kitchen.orders, bar.orders]);
+
   if (kitchen.loading || bar.loading) {
     return (
       <View style={styles.centered}>
@@ -64,6 +101,25 @@ export default function StatusScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      {recentlyDone.length > 0 && (
+        <View style={styles.recentBar}>
+          <Text style={styles.recentBarTitle}>Zuletzt zubereitet</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.recentBarContent}
+          >
+            {recentlyDone.map((entry) => (
+              <View key={entry.id} style={styles.recentChip}>
+                <Text style={styles.recentChipDish}>{dishLabel(entry.item)}</Text>
+                <Text style={styles.recentChipMeta}>
+                  Tisch {entry.tableNumber} · {formatTime(entry.doneAt)}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
       <FlatList
         data={rows}
         keyExtractor={(row) => String(row.tableNumber)}
@@ -100,6 +156,32 @@ const createStyles = (colors: ThemeColors) =>
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
     errorText: { color: colors.danger, padding: 16 },
     listContent: { padding: 12 },
+    recentBar: {
+      backgroundColor: colors.surface,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      paddingTop: 10,
+      paddingBottom: 12,
+    },
+    recentBarTitle: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      paddingHorizontal: 16,
+      marginBottom: 8,
+    },
+    recentBarContent: { paddingHorizontal: 12, gap: 8 },
+    recentChip: {
+      backgroundColor: colors.successSurface,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      maxWidth: 240,
+    },
+    recentChipDish: { fontSize: 14, fontWeight: '700', color: colors.text },
+    recentChipMeta: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
     card: {
       backgroundColor: colors.surface,
       borderRadius: 12,

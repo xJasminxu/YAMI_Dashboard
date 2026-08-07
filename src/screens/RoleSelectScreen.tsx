@@ -56,7 +56,9 @@ export default function RoleSelectScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <Image source={require('../../assets/yami-logo.png')} style={styles.logo} resizeMode="contain" />
+      <View style={styles.logoBackdrop}>
+        <Image source={require('../../assets/yami-logo.png')} style={styles.logo} resizeMode="contain" />
+      </View>
       {DEVICE_ROLES.map(({ role, label }) => (
         <TouchableOpacity key={role} style={styles.button} onPress={() => navigateToRole(navigation, role)}>
           <Text style={styles.buttonText}>{label}</Text>
@@ -114,11 +116,21 @@ const createStyles = (colors: ThemeColors) =>
       padding: 24,
       gap: 12,
     },
-    logo: {
+    // Das Logo ist weißes Linienwerk auf transparentem Hintergrund — im Light
+    // Mode sonst unsichtbar. Fester dunkler Badge-Hintergrund statt einer
+    // zweiten Bilddatei, damit das Logo in beiden Themes lesbar bleibt.
+    logoBackdrop: {
       width: '80%',
       maxWidth: 320,
-      height: 120,
+      backgroundColor: '#1c1c1e',
+      borderRadius: 16,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
       marginBottom: 16,
+    },
+    logo: {
+      width: '100%',
+      height: 120,
     },
     button: {
       width: '100%',

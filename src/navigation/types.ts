@@ -7,4 +7,5 @@ export type RootStackParamList = {
   TableDetail: { tableNumber: number };
   TableOverview: undefined;
   TableBilling: { tableNumber: number };
+  PdfViewer: { moduleId: number; title: string };
 };

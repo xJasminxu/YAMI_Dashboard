@@ -156,13 +156,13 @@ on conflict (category_id, name_de) do update set
 -- Stückzahl ab, deshalb steckt er in der jeweiligen Variante statt auf dem Item
 -- selbst (menu_items.price bleibt hier null).
 insert into menu_items (category_id, name_hanzi, name_de, item_code, variant_options) values
-  ((select id from categories where name_de = 'fried chicken'), '原味炸鸡', 'Original Fried Chicken 4x/8x', 'F1',
+  ((select id from categories where name_de = 'fried chicken'), '原味炸鸡', 'Original Fried Chicken', 'F1',
     '[{"name_hanzi": "4个", "name_de": "4 Stück", "price": 6.40}, {"name_hanzi": "8个", "name_de": "8 Stück", "price": 11.90}]'),
-  ((select id from categories where name_de = 'fried chicken'), '韩式炸鸡 甜辣', 'KFC süss-scharf 4x/8x', 'F2',
+  ((select id from categories where name_de = 'fried chicken'), '韩式炸鸡 甜辣', 'KFC süss-scharf', 'F2',
     '[{"name_hanzi": "4个", "name_de": "4 Stück", "price": 6.40}, {"name_hanzi": "8个", "name_de": "8 Stück", "price": 11.90}]'),
-  ((select id from categories where name_de = 'fried chicken'), '韩式炸鸡 蒜香酱', 'KFC Knoblauch-Sauce 4x/8x', 'F3',
+  ((select id from categories where name_de = 'fried chicken'), '韩式炸鸡 蒜香酱', 'KFC Knoblauch-Sauce', 'F3',
     '[{"name_hanzi": "4个", "name_de": "4 Stück", "price": 6.40}, {"name_hanzi": "8个", "name_de": "8 Stück", "price": 11.90}]'),
-  ((select id from categories where name_de = 'fried chicken'), '韩式炸鸡 辣味蛋黄酱', 'KFC scharfe Mayonnaise 4x/8x', 'F4',
+  ((select id from categories where name_de = 'fried chicken'), '韩式炸鸡 辣味蛋黄酱', 'KFC scharfe Mayonnaise', 'F4',
     '[{"name_hanzi": "4个", "name_de": "4 Stück", "price": 6.40}, {"name_hanzi": "8个", "name_de": "8 Stück", "price": 11.90}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
