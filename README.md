@@ -1,24 +1,8 @@
 # YAMI Dashboard
 
 Digitales Bestellsystem für die Kommunikation Bedienung → Küche/Bar. Kein Zusammenhang mit
-dem bestehenden Kassensystem. Details, Anforderungen und Architektur: siehe `CLAUDE.md`.
+dem bestehenden Kassensystem. 
 
-## Status
-
-Expo/React-Native-Projekt ist gescaffoldet (TypeScript, React Navigation, Supabase-Client,
-Rollenauswahl + Bestellung/Küche/Bar/Status-Screens mit funktionierender Grundmechanik).
-Noch offen: echtes Supabase-Projekt anlegen und `.env` befüllen (siehe unten), danach
-gegen echte Daten testen und UI verfeinern.
-
-## Erste Schritte
-
-1. Ein Supabase-Projekt anlegen (supabase.com), `supabase/schema.sql` im SQL-Editor
-   ausführen.
-2. Vor dem Ausführen von `supabase/seed.sql`: die offenen Fragen darin klären
-   (Softgetränke/Bier-Kategorien, Hanzi-Übersetzungen von Küchenpersonal prüfen lassen).
-3. `.env` gemäß `.env.example` mit der Supabase-URL und dem anon-Key füllen.
-4. `npm install` (falls `node_modules` fehlt), dann `npm run start` (bzw. `android`/`ios`/
-   `web`).
 
 ## Troubleshooting: Schema-Änderungen auf einem bestehenden Supabase-Projekt
 

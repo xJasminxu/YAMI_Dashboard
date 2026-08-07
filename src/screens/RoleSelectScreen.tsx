@@ -4,6 +4,8 @@ import { ActivityIndicator, Image, Modal, StyleSheet, Text, TouchableOpacity, Vi
 import { DEVICE_ROLES, type DeviceRole } from '../types/role';
 import { supabase } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation/types';
+import type { ThemeColors } from '../theme/colors';
+import { useThemedStyles } from '../theme/useThemedStyles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'RoleSelect'>;
 
@@ -28,6 +30,7 @@ function navigateToRole(navigation: Props['navigation'], role: DeviceRole) {
 }
 
 export default function RoleSelectScreen({ navigation }: Props) {
+  const styles = useThemedStyles(createStyles);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -101,75 +104,82 @@ export default function RoleSelectScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#111827',
-    padding: 24,
-    gap: 12,
-  },
-  logo: {
-    width: '80%',
-    maxWidth: 320,
-    height: 120,
-    marginBottom: 16,
-  },
-  button: {
-    width: '100%',
-    maxWidth: 320,
-    backgroundColor: '#1f2937',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  dayCloseButton: {
-    width: '100%',
-    maxWidth: 320,
-    borderWidth: 1.5,
-    borderColor: '#b91c1c',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  dayCloseButtonText: {
-    color: '#b91c1c',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 20,
-    width: '100%',
-    maxWidth: 380,
-  },
-  modalTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 10 },
-  modalBody: { fontSize: 14, color: '#374151', textAlign: 'center', marginBottom: 20, lineHeight: 20 },
-  errorText: { color: '#b91c1c', textAlign: 'center', marginBottom: 12 },
-  confirmButton: {
-    backgroundColor: '#b91c1c',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  confirmButtonDisabled: { backgroundColor: '#f3a3a3' },
-  confirmButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  cancelButton: { paddingVertical: 10, alignItems: 'center' },
-  cancelButtonText: { fontSize: 15, color: '#6b7280' },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.background,
+      padding: 24,
+      gap: 12,
+    },
+    logo: {
+      width: '80%',
+      maxWidth: 320,
+      height: 120,
+      marginBottom: 16,
+    },
+    button: {
+      width: '100%',
+      maxWidth: 320,
+      backgroundColor: colors.surface,
+      paddingVertical: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+    },
+    buttonText: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '600',
+    },
+    dayCloseButton: {
+      width: '100%',
+      maxWidth: 320,
+      borderWidth: 1.5,
+      borderColor: colors.danger,
+      paddingVertical: 14,
+      borderRadius: 12,
+      alignItems: 'center',
+      marginTop: 20,
+    },
+    dayCloseButtonText: {
+      color: colors.danger,
+      fontSize: 16,
+      fontWeight: '700',
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: colors.overlay,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+    },
+    modalCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 14,
+      padding: 20,
+      width: '100%',
+      maxWidth: 380,
+    },
+    modalTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 10, color: colors.text },
+    modalBody: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginBottom: 20,
+      lineHeight: 20,
+    },
+    errorText: { color: colors.danger, textAlign: 'center', marginBottom: 12 },
+    confirmButton: {
+      backgroundColor: '#b91c1c',
+      borderRadius: 10,
+      paddingVertical: 14,
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    confirmButtonDisabled: { backgroundColor: '#f3a3a3' },
+    confirmButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+    cancelButton: { paddingVertical: 10, alignItems: 'center' },
+    cancelButtonText: { fontSize: 15, color: colors.textMuted },
+  });

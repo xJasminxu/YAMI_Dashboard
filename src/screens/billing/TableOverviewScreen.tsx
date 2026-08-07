@@ -3,6 +3,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { RootStackParamList } from '../../navigation/types';
+import type { ThemeColors } from '../../theme/colors';
+import { useThemedStyles } from '../../theme/useThemedStyles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TableOverview'>;
 
@@ -17,6 +19,7 @@ interface TableRow {
 // sichtbar, sobald Küche/Bar bereits fertig sind, weil dann erst abgerechnet
 // wird. Dient als Einstieg für die vorläufige Abrechnung pro Tisch.
 export default function TableOverviewScreen({ navigation }: Props) {
+  const styles = useThemedStyles(createStyles);
   const kitchen = useDeviceOrders('kitchen');
   const bar = useDeviceOrders('bar');
 
@@ -73,21 +76,22 @@ export default function TableOverviewScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: '#b91c1c', padding: 16 },
-  listContent: { padding: 12 },
-  card: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  tableLabel: { fontSize: 18, fontWeight: '700' },
-  progressText: { fontSize: 16, color: '#374151' },
-  emptyText: { textAlign: 'center', color: '#9ca3af', marginTop: 32 },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
+    errorText: { color: colors.danger, padding: 16 },
+    listContent: { padding: 12 },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    tableLabel: { fontSize: 18, fontWeight: '700', color: colors.text },
+    progressText: { fontSize: 16, color: colors.textSecondary },
+    emptyText: { textAlign: 'center', color: colors.textFaint, marginTop: 32 },
+  });

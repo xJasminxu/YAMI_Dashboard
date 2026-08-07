@@ -1,7 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useDeviceOrders, type GroupedOrder } from '../hooks/useDeviceOrders';
+import { useNewOrderChime } from '../hooks/useNewOrderChime';
 import type { TargetDevice } from '../types/database';
+import type { ThemeColors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
+import { useThemedStyles } from '../theme/useThemedStyles';
 
 type Tab = 'offen' | 'fertig';
 
@@ -15,11 +19,17 @@ function progressFor(order: GroupedOrder): OrderProgress {
   return 'angefangen';
 }
 
-const CARD_BACKGROUND: Record<OrderProgress, object> = {
-  neu: { backgroundColor: '#dbeafe' }, // pastell blau
-  angefangen: { backgroundColor: '#fde2ea' }, // pastell rosa
-  fertig: { backgroundColor: '#dcfce7' }, // pastell grün
-};
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+}
+
+function cardBackgroundFor(colors: ThemeColors): Record<OrderProgress, object> {
+  return {
+    neu: { backgroundColor: colors.cardNeu },
+    angefangen: { backgroundColor: colors.cardAngefangen },
+    fertig: { backgroundColor: colors.cardFertig },
+  };
+}
 
 // large: größere Karten/Schrift für Geräte, die aus Distanz gelesen werden
 // müssen (z.B. iPad in der Küche, wo die Köche verteilt am Pass stehen).
@@ -30,8 +40,16 @@ export default function DeviceTicketBoard({
   targetDevice: TargetDevice;
   large?: boolean;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const cardBackground = useMemo(() => cardBackgroundFor(colors), [colors]);
   const { orders, loading, error, setItemStatus } = useDeviceOrders(targetDevice);
   const [tab, setTab] = useState<Tab>('offen');
+  // Standardmäßig an — Köche/Bar können den Ton per Glocken-Button stumm
+  // schalten (z.B. während einer Pause). Zustand ist rein lokal (pro
+  // Bildschirm/App-Start), keine Persistierung in v1.
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  useNewOrderChime(orders, soundEnabled);
 
   const { open, done } = useMemo(() => {
     const open = orders.filter((order) => order.items.some((item) => item.status === 'offen'));
@@ -60,12 +78,23 @@ export default function DeviceTicketBoard({
   return (
     <View style={styles.container}>
       <View style={styles.tabBar}>
-        <TouchableOpacity style={[styles.tab, tab === 'offen' && styles.tabActive]} onPress={() => setTab('offen')}>
-          <Text style={[styles.tabText, tab === 'offen' && styles.tabTextActive]}>Offen ({open.length})</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.tab, tab === 'fertig' && styles.tabActive]} onPress={() => setTab('fertig')}>
-          <Text style={[styles.tabText, tab === 'fertig' && styles.tabTextActive]}>
-            Vergangene Bestellungen ({done.length})
+        <View style={styles.tabsRow}>
+          <TouchableOpacity style={[styles.tab, tab === 'offen' && styles.tabActive]} onPress={() => setTab('offen')}>
+            <Text style={[styles.tabText, tab === 'offen' && styles.tabTextActive]}>Offen ({open.length})</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.tab, tab === 'fertig' && styles.tabActive]} onPress={() => setTab('fertig')}>
+            <Text style={[styles.tabText, tab === 'fertig' && styles.tabTextActive]}>
+              Vergangene Bestellungen ({done.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity
+          style={[styles.bellButton, large && styles.bellButtonLarge]}
+          onPress={() => setSoundEnabled((v) => !v)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={[styles.bellButtonText, large && styles.bellButtonTextLarge]}>
+            {soundEnabled ? '🔔' : '🔕'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -75,8 +104,11 @@ export default function DeviceTicketBoard({
         keyExtractor={(order) => order.orderId}
         contentContainerStyle={[styles.listContent, large && styles.listContentLarge]}
         renderItem={({ item: order }) => (
-          <View style={[styles.card, large && styles.cardLarge, CARD_BACKGROUND[progressFor(order)]]}>
-            <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>Tisch {order.table.number}</Text>
+          <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
+            <View style={styles.cardHeader}>
+              <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>Tisch {order.table.number}</Text>
+              <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>{formatTime(order.createdAt)}</Text>
+            </View>
             {order.items.map((item) => (
               <TouchableOpacity
                 key={item.id}
@@ -120,35 +152,55 @@ export default function DeviceTicketBoard({
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: '#b91c1c', padding: 16 },
-  tabBar: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
-  tab: { flex: 1, paddingVertical: 14, alignItems: 'center' },
-  tabActive: { borderBottomWidth: 3, borderBottomColor: '#1f2937' },
-  tabText: { fontSize: 15, color: '#6b7280' },
-  tabTextActive: { color: '#1f2937', fontWeight: '700' },
-  listContent: { padding: 12, gap: 12 },
-  listContentLarge: { gap: 16 },
-  card: {
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-  },
-  cardLarge: { padding: 20, borderRadius: 16 },
-  tableLabel: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
-  tableLabelLarge: { fontSize: 28, marginBottom: 12 },
-  itemRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
-  itemRowLarge: { paddingVertical: 14 },
-  itemHanzi: { fontSize: 18, fontWeight: '600' },
-  itemHanziLarge: { fontSize: 70 },
-  itemDe: { fontSize: 13, color: '#6b7280' },
-  itemDeLarge: { fontSize: 19 },
-  itemExtras: { fontSize: 12, color: '#374151', marginTop: 2, fontStyle: 'italic' },
-  itemExtrasLarge: { fontSize: 17, marginTop: 4 },
-  itemNote: { fontSize: 12, color: '#b45309', marginTop: 2, fontWeight: '700' },
-  itemNoteLarge: { fontSize: 25, marginTop: 4 },
-  itemDone: { textDecorationLine: 'line-through', color: '#9ca3af' },
-  emptyText: { textAlign: 'center', color: '#9ca3af', marginTop: 32 },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
+    errorText: { color: colors.danger, padding: 16 },
+    tabBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    tabsRow: { flex: 1, flexDirection: 'row' },
+    tab: { flex: 1, paddingVertical: 14, alignItems: 'center' },
+    tabActive: { borderBottomWidth: 3, borderBottomColor: colors.text },
+    tabText: { fontSize: 15, color: colors.textMuted },
+    tabTextActive: { color: colors.text, fontWeight: '700' },
+    bellButton: { paddingHorizontal: 14, paddingVertical: 10 },
+    bellButtonLarge: { paddingHorizontal: 18, paddingVertical: 14 },
+    bellButtonText: { fontSize: 22 },
+    bellButtonTextLarge: { fontSize: 32 },
+    listContent: { padding: 12, gap: 12 },
+    listContentLarge: { gap: 16 },
+    card: {
+      borderRadius: 12,
+      padding: 14,
+      marginBottom: 12,
+    },
+    cardLarge: { padding: 20, borderRadius: 16 },
+    cardHeader: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+      gap: 8,
+    },
+    tableLabel: { fontSize: 18, fontWeight: '700', color: colors.text },
+    tableLabelLarge: { fontSize: 28 },
+    timeLabel: { fontSize: 13, color: colors.textMuted, fontWeight: '600' },
+    timeLabelLarge: { fontSize: 18 },
+    itemRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border },
+    itemRowLarge: { paddingVertical: 14 },
+    itemHanzi: { fontSize: 18, fontWeight: '600', color: colors.text },
+    itemHanziLarge: { fontSize: 28 },
+    itemDe: { fontSize: 13, color: colors.textMuted },
+    itemDeLarge: { fontSize: 19 },
+    itemExtras: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontStyle: 'italic' },
+    itemExtrasLarge: { fontSize: 17, marginTop: 4 },
+    itemNote: { fontSize: 12, color: colors.warning, marginTop: 2, fontWeight: '700' },
+    itemNoteLarge: { fontSize: 17, marginTop: 4 },
+    itemDone: { textDecorationLine: 'line-through', color: colors.textFaint },
+    emptyText: { textAlign: 'center', color: colors.textFaint, marginTop: 32 },
+  });

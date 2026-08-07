@@ -4,6 +4,8 @@ import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View }
 import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import type { RootStackParamList } from '../../navigation/types';
+import type { ThemeColors } from '../../theme/colors';
+import { useThemedStyles } from '../../theme/useThemedStyles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Status'>;
 
@@ -18,6 +20,7 @@ interface TableRow {
 // Realtime-Daten wie Küche/Bar (kombiniert über beide Geräte, pro Tisch statt
 // pro einzelner Bestellung — ein Tisch kann mehrere offene Bestellungen haben).
 export default function StatusScreen({ navigation }: Props) {
+  const styles = useThemedStyles(createStyles);
   const kitchen = useDeviceOrders('kitchen');
   const bar = useDeviceOrders('bar');
 
@@ -91,26 +94,27 @@ export default function StatusScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: '#b91c1c', padding: 16 },
-  listContent: { padding: 12 },
-  card: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  tableLabel: { fontSize: 18, fontWeight: '700' },
-  progressText: { fontSize: 16, color: '#374151' },
-  openLabel: { fontSize: 12, fontWeight: '700', color: '#b45309', marginBottom: 2 },
-  openItemText: { fontSize: 14, color: '#374151' },
-  emptyText: { textAlign: 'center', color: '#9ca3af', marginTop: 32 },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
+    errorText: { color: colors.danger, padding: 16 },
+    listContent: { padding: 12 },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+    },
+    cardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    tableLabel: { fontSize: 18, fontWeight: '700', color: colors.text },
+    progressText: { fontSize: 16, color: colors.textSecondary },
+    openLabel: { fontSize: 12, fontWeight: '700', color: colors.warning, marginBottom: 2 },
+    openItemText: { fontSize: 14, color: colors.textSecondary },
+    emptyText: { textAlign: 'center', color: colors.textFaint, marginTop: 32 },
+  });

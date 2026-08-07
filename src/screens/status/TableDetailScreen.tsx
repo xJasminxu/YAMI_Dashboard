@@ -4,13 +4,17 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import type { RootStackParamList } from '../../navigation/types';
+import type { ThemeColors } from '../../theme/colors';
+import { useThemedStyles } from '../../theme/useThemedStyles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TableDetail'>;
+type TableDetailStyles = ReturnType<typeof createStyles>;
 
 // Bestellübersicht für einen Tisch: fasst Küche + Bar zusammen (über evtl.
 // mehrere Bestellungen/Nachbestellungen hinweg), live über dieselben
 // Realtime-Subscriptions wie die Küchen-/Bar-Ansichten.
 export default function TableDetailScreen({ route }: Props) {
+  const styles = useThemedStyles(createStyles);
   const { tableNumber } = route.params;
   const kitchen = useDeviceOrders('kitchen');
   const bar = useDeviceOrders('bar');
@@ -46,8 +50,8 @@ export default function TableDetailScreen({ route }: Props) {
 
       {totalItems === 0 && <Text style={styles.emptyText}>Keine offenen Positionen für diesen Tisch.</Text>}
 
-      {kitchenItems.length > 0 && <ItemSection title="Küche" items={kitchenItems} />}
-      {barItems.length > 0 && <ItemSection title="Bar" items={barItems} />}
+      {kitchenItems.length > 0 && <ItemSection title="Küche" items={kitchenItems} styles={styles} />}
+      {barItems.length > 0 && <ItemSection title="Bar" items={barItems} styles={styles} />}
     </ScrollView>
   );
 }
@@ -59,7 +63,15 @@ function collectItemsForTable(orders: { table: { number: number }; items: Device
     .sort((a, b) => a.menu_item.category.sort_order - b.menu_item.category.sort_order);
 }
 
-function ItemSection({ title, items }: { title: string; items: DeviceOrderItem[] }) {
+function ItemSection({
+  title,
+  items,
+  styles,
+}: {
+  title: string;
+  items: DeviceOrderItem[];
+  styles: TableDetailStyles;
+}) {
   const open = items.filter((item) => item.status === 'offen');
   const done = items.filter((item) => item.status === 'fertig');
 
@@ -69,16 +81,16 @@ function ItemSection({ title, items }: { title: string; items: DeviceOrderItem[]
         {title} — {done.length}/{items.length} fertig
       </Text>
       {open.map((item) => (
-        <ItemRow key={item.id} item={item} />
+        <ItemRow key={item.id} item={item} styles={styles} />
       ))}
       {done.map((item) => (
-        <ItemRow key={item.id} item={item} />
+        <ItemRow key={item.id} item={item} styles={styles} />
       ))}
     </View>
   );
 }
 
-function ItemRow({ item }: { item: DeviceOrderItem }) {
+function ItemRow({ item, styles }: { item: DeviceOrderItem; styles: TableDetailStyles }) {
   const isDone = item.status === 'fertig';
   return (
     <View style={styles.itemRow}>
@@ -104,27 +116,28 @@ function ItemRow({ item }: { item: DeviceOrderItem }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  content: { padding: 16 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: '#b91c1c', padding: 16 },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 16 },
-  emptyText: { color: '#9ca3af', marginTop: 16 },
-  section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#374151', marginBottom: 8 },
-  itemRow: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-  },
-  itemHanzi: { fontSize: 17, fontWeight: '600' },
-  itemDe: { fontSize: 13, color: '#6b7280' },
-  itemExtras: { fontSize: 12, color: '#374151', marginTop: 2, fontStyle: 'italic' },
-  itemNote: { fontSize: 12, color: '#b45309', marginTop: 2, fontWeight: '700' },
-  itemDone: { textDecorationLine: 'line-through', color: '#9ca3af' },
-  itemStatus: { fontSize: 11, fontWeight: '700', marginTop: 4, textTransform: 'uppercase' },
-  itemStatusOpen: { color: '#b45309' },
-  itemStatusDone: { color: '#16a34a' },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    content: { padding: 16 },
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
+    errorText: { color: colors.danger, padding: 16 },
+    title: { fontSize: 24, fontWeight: '700', marginBottom: 16, color: colors.text },
+    emptyText: { color: colors.textFaint, marginTop: 16 },
+    section: { marginBottom: 24 },
+    sectionTitle: { fontSize: 16, fontWeight: '700', color: colors.textSecondary, marginBottom: 8 },
+    itemRow: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      padding: 12,
+      marginBottom: 8,
+    },
+    itemHanzi: { fontSize: 17, fontWeight: '600', color: colors.text },
+    itemDe: { fontSize: 13, color: colors.textMuted },
+    itemExtras: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontStyle: 'italic' },
+    itemNote: { fontSize: 12, color: colors.warning, marginTop: 2, fontWeight: '700' },
+    itemDone: { textDecorationLine: 'line-through', color: colors.textFaint },
+    itemStatus: { fontSize: 11, fontWeight: '700', marginTop: 4, textTransform: 'uppercase' },
+    itemStatusOpen: { color: colors.warning },
+    itemStatusDone: { color: colors.success },
+  });

@@ -1,4 +1,5 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import ThemeToggleButton from '../components/ThemeToggleButton';
 import RoleSelectScreen from '../screens/RoleSelectScreen';
 import OrderScreen from '../screens/order/OrderScreen';
 import KitchenScreen from '../screens/kitchen/KitchenScreen';
@@ -13,8 +14,11 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function RootNavigator() {
   return (
-    <Stack.Navigator initialRouteName="RoleSelect">
-      <Stack.Screen name="RoleSelect" component={RoleSelectScreen} options={{ title: 'Aufgabe wählen' }} />
+    <Stack.Navigator
+      initialRouteName="RoleSelect"
+      screenOptions={{ headerRight: () => <ThemeToggleButton /> }}
+    >
+      <Stack.Screen name="RoleSelect" component={RoleSelectScreen} options={{ title: 'Hauptmenü' }} />
       <Stack.Screen name="Order" component={OrderScreen} options={{ title: 'Bestellung' }} />
       <Stack.Screen name="Kitchen" component={KitchenScreen} options={{ title: 'Küche' }} />
       <Stack.Screen name="Bar" component={BarScreen} options={{ title: 'Bar' }} />

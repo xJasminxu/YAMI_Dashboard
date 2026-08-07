@@ -84,8 +84,6 @@ und tragen zusätzlich Name auf Hanzi (primär) und Deutsch (sekundär).
 - Hauptspeise: warme speisen, ramen, nudeln, suppen
 - Barbecue: korean bbq
 
-(Diese Gruppierung ist eine Annahme basierend auf der Kategorienliste — mit Nutzer
-gegenchecken, insbesondere ob "suppen" wirklich als Vorspeise gilt.)
 
 **Bar:** Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Schnaps → Kaffee/Matcha
 → Nachspeise (Mochi Eis → Eis → Eisschnee). "Schnaps" (Soju/Makgeolli) ist direkt nach
