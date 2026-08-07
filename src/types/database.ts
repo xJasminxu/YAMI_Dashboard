@@ -3,14 +3,20 @@
 export type MenuGroup = 'essen' | 'getraenke' | 'nachspeisen';
 export type TargetDevice = 'kitchen' | 'bar';
 export type OrderItemStatus = 'offen' | 'fertig';
+// Nur bei target_device='kitchen' gesetzt — steuert die Zwei-Spalten-Ansicht auf dem
+// Küchen-Screen (siehe DeviceTicketBoard.tsx). Bei Bar-Kategorien immer null.
+export type KitchenStation = 'vorspeise' | 'hauptspeise' | 'barbecue';
 
 export interface Category {
   id: string;
-  name_hanzi: string;
+  // null bei Bar-Kategorien (Getränke/Nachspeisen) — dort wird auf Deutsch gearbeitet,
+  // Hanzi ist primär für die Küche.
+  name_hanzi: string | null;
   name_de: string;
   menu_group: MenuGroup;
   target_device: TargetDevice;
   sort_order: number;
+  kitchen_station: KitchenStation | null;
   created_at: string;
 }
 

@@ -14,56 +14,78 @@
 --
 -- PREISE: dienen nur als Referenz für Bedienung/Gäste in der App — es gibt
 -- weiterhin keine Rechnungsstellung/Zahlung, das bleibt beim bestehenden
--- Kassensystem. Noch OHNE Preis (fehlt in der Vorlage): Makgeolli.
+-- Kassensystem. Makgeolli hat vorerst 12,90€ (noch kein endgültiger Preis von
+-- der Karte bekannt, bei Bedarf anpassen).
 --
 
--- Essen → Küche, Sortierung: Vorspeise (1-2) → Hauptspeise (3-6) → Barbecue (7)
+-- Essen → Küche, Sortierung: Vorspeise (1-2) → Hauptspeise (3-6) → Barbecue (7).
+-- kitchen_station gruppiert dieselben Kategorien zusätzlich für die Zwei-Spalten-
+-- Ansicht auf dem Küchen-Screen (Vorspeise-Spalte vs. Hauptspeise+Barbecue-Spalte).
+insert into categories (name_hanzi, name_de, menu_group, target_device, sort_order, kitchen_station) values
+  ('小吃', 'kleinigkeiten', 'essen', 'kitchen', 1, 'vorspeise'),
+  ('汤', 'suppen', 'essen', 'kitchen', 2, 'hauptspeise'),
+  ('炸鸡', 'fried chicken', 'essen', 'kitchen', 3, 'vorspeise'),
+  ('热菜', 'warme speisen', 'essen', 'kitchen', 4, 'hauptspeise'),
+  ('拉面', 'ramen', 'essen', 'kitchen', 5, 'hauptspeise'),
+  ('面条', 'nudeln', 'essen', 'kitchen', 6, 'hauptspeise'),
+  ('烤肉', 'korean bbq', 'essen', 'kitchen', 7, 'barbecue')
+on conflict (name_de) do update set
+  name_hanzi = excluded.name_hanzi,
+  menu_group = excluded.menu_group,
+  target_device = excluded.target_device,
+  sort_order = excluded.sort_order,
+  kitchen_station = excluded.kitchen_station;
+
+-- Getränke + Nachspeisen → Bar
+-- Sortierung: Alkoholfreie Getränke → Bier → Cocktails → Spirituosen
+-- → Kaffee/Matcha → Nachspeise (Mochi Eis → Eis → Eisschnee).
+-- Die frühere eigene "Schnaps"-Kategorie (Soju/Makgeolli) wurde aufgelöst —
+-- beide Getränke stehen jetzt unter Spirituosen (siehe Migration unten).
+-- Kein Hanzi für Bar-Kategorien (Getränke/Nachspeisen) — an der Bar wird auf Deutsch
+-- gearbeitet, Hanzi ist primär für die Küche. OrderScreen.tsx/DeviceTicketBoard.tsx
+-- zeigen bei fehlendem Hanzi stattdessen den deutschen Namen groß/prominent an.
 insert into categories (name_hanzi, name_de, menu_group, target_device, sort_order) values
-  ('小吃', 'kleinigkeiten', 'essen', 'kitchen', 1),
-  ('汤', 'suppen', 'essen', 'kitchen', 2),
-  ('炸鸡', 'fried chicken', 'essen', 'kitchen', 3),
-  ('热菜', 'warme speisen', 'essen', 'kitchen', 4),
-  ('拉面', 'ramen', 'essen', 'kitchen', 5),
-  ('面条', 'nudeln', 'essen', 'kitchen', 6),
-  ('烤肉', 'korean bbq', 'essen', 'kitchen', 7)
+  (null, 'alkoholfreie getränke', 'getraenke', 'bar', 1),
+  (null, 'bier', 'getraenke', 'bar', 2),
+  (null, 'cocktails', 'getraenke', 'bar', 3),
+  (null, 'spirituosen', 'getraenke', 'bar', 4),
+  (null, 'kaffee/matcha', 'getraenke', 'bar', 5),
+  (null, 'mochi eis', 'nachspeisen', 'bar', 6),
+  (null, 'eis', 'nachspeisen', 'bar', 7),
+  (null, 'eisschnee', 'nachspeisen', 'bar', 8)
 on conflict (name_de) do update set
   name_hanzi = excluded.name_hanzi,
   menu_group = excluded.menu_group,
   target_device = excluded.target_device,
   sort_order = excluded.sort_order;
 
--- Getränke + Nachspeisen → Bar
--- Sortierung: Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Schnaps
--- → Kaffee/Matcha → Nachspeise (Mochi Eis → Eis → Eisschnee).
--- "Schnaps" (Soju/Makgeolli) direkt nach Spirituosen einsortiert — bei Bedarf
--- Position anpassen, war in der ursprünglichen Anforderung nicht spezifiziert.
-insert into categories (name_hanzi, name_de, menu_group, target_device, sort_order) values
-  ('无酒精饮品', 'alkoholfreie getränke', 'getraenke', 'bar', 1),
-  ('啤酒', 'bier', 'getraenke', 'bar', 2),
-  ('调酒', 'cocktails', 'getraenke', 'bar', 3),
-  ('烈酒', 'spirituosen', 'getraenke', 'bar', 4),
-  ('韩式酒类', 'schnaps', 'getraenke', 'bar', 5),
-  ('咖啡/抹茶', 'kaffee/matcha', 'getraenke', 'bar', 6),
-  ('麻薯冰淇淋', 'mochi eis', 'nachspeisen', 'bar', 7),
-  ('冰淇淋', 'eis', 'nachspeisen', 'bar', 8),
-  ('刨冰', 'eisschnee', 'nachspeisen', 'bar', 9)
-on conflict (name_de) do update set
-  name_hanzi = excluded.name_hanzi,
-  menu_group = excluded.menu_group,
-  target_device = excluded.target_device,
-  sort_order = excluded.sort_order;
+-- Migration: Schnaps-Kategorie aufgelöst, Soju/Makgeolli ziehen zu Spirituosen um.
+-- Erst bestehende menu_items-Zeilen umhängen (UPDATE statt delete+insert, damit
+-- menu_item_id stabil bleibt und alte order_items-Referenzen gültig bleiben),
+-- danach die jetzt leere Kategorie löschen (menu_items→categories ist
+-- "on delete restrict", ein delete würde vorher fehlschlagen). Auf einer frischen
+-- Datenbank, die "schnaps" nie hatte, matcht das UPDATE nichts und ist ein No-op.
+update menu_items
+set category_id = (select id from categories where name_de = 'spirituosen'),
+    price = case name_de when 'Makgeolli' then 12.90 else price end
+where category_id = (select id from categories where name_de = 'schnaps');
+
+delete from categories where name_de = 'schnaps';
 
 -- Diverse-Kategorien: Sammelposten für Gerichte/Getränke, die (noch) nicht auf der
 -- Karte stehen. Enthalten jeweils ein einzelnes "Diverses"-Item mit frei eintragbarem
 -- Preis + Beschreibung (siehe menu_items.is_custom_entry, OrderScreen.tsx).
-insert into categories (name_hanzi, name_de, menu_group, target_device, sort_order) values
-  ('其他菜品', 'diverses essen', 'essen', 'kitchen', 8),
-  ('其他饮品', 'diverses getränke', 'getraenke', 'bar', 10)
+-- "diverses essen" fällt in der Küchen-Zwei-Spalten-Ansicht auf hauptspeise zurück,
+-- da nicht vorhersehbar ist, was frei eingetragen wird.
+insert into categories (name_hanzi, name_de, menu_group, target_device, sort_order, kitchen_station) values
+  ('其他菜品', 'diverses essen', 'essen', 'kitchen', 8, 'hauptspeise'),
+  (null, 'diverses getränke', 'getraenke', 'bar', 9, null)
 on conflict (name_de) do update set
   name_hanzi = excluded.name_hanzi,
   menu_group = excluded.menu_group,
   target_device = excluded.target_device,
-  sort_order = excluded.sort_order;
+  sort_order = excluded.sort_order,
+  kitchen_station = excluded.kitchen_station;
 
 -- Tische: drinnen 1-21, Terrasse 1: 101-103, Terrasse 2: 201-204
 insert into tables (number)
@@ -177,7 +199,7 @@ insert into menu_items (category_id, name_hanzi, name_de, item_code, price) valu
   ((select id from categories where name_de = 'kleinigkeiten'), '煎蔬菜饺子', 'Gyoza gebraten Gemüse', 'K4e', 4.90),
   ((select id from categories where name_de = 'kleinigkeiten'), '煎鸡肉饺子', 'Gyoza gebraten Huhn', 'K4f', 5.20),
   ((select id from categories where name_de = 'kleinigkeiten'), '虾饺', 'Hau Kau Garnelen', 'K4g', 5.90),
-  ((select id from categories where name_de = 'kleinigkeiten'), '天妇罗虾', 'Garnelen Tempura', 'K6', 5.20)
+  ((select id from categories where name_de = 'kleinigkeiten'), '面包虾', 'Garnelen Tempura', 'K6', 5.20)
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   item_code = excluded.item_code,
@@ -186,12 +208,13 @@ on conflict (category_id, name_de) do update set
 -- Nachtisch → Mochi-Eis / Eis (Bar-Kategorien), pro Geschmack aufgeteilt (siehe
 -- Annahme oben in der Historie dieser Datei); alle Geschmacksrichtungen von N1
 -- bzw. N2 teilen sich denselben Preis wie auf der Karte angegeben.
+-- Kein Hanzi (siehe Bar-Kategorien oben) — an der Bar wird auf Deutsch gearbeitet.
 insert into menu_items (category_id, name_hanzi, name_de, item_code, price) values
-  ((select id from categories where name_de = 'mochi eis'), '椰子麻薯冰淇淋', 'Mochi-Eis Kokos', 'N1', 4.50),
-  ((select id from categories where name_de = 'mochi eis'), '抹茶麻薯冰淇淋', 'Mochi-Eis Matcha', 'N1', 4.50),
-  ((select id from categories where name_de = 'mochi eis'), '巧克力麻薯冰淇淋', 'Mochi-Eis Schoko', 'N1', 4.50),
-  ((select id from categories where name_de = 'eis'), '抹茶冰淇淋', 'Matcha-Eis', 'N2', 4.50),
-  ((select id from categories where name_de = 'eis'), '芝麻冰淇淋', 'Sesam-Eis', 'N2', 4.50)
+  ((select id from categories where name_de = 'mochi eis'), null, 'Mochi-Eis Kokos', 'N1', 4.50),
+  ((select id from categories where name_de = 'mochi eis'), null, 'Mochi-Eis Matcha', 'N1', 4.50),
+  ((select id from categories where name_de = 'mochi eis'), null, 'Mochi-Eis Schoko', 'N1', 4.50),
+  ((select id from categories where name_de = 'eis'), null, 'Matcha-Eis', 'N2', 4.50),
+  ((select id from categories where name_de = 'eis'), null, 'Sesam-Eis', 'N2', 4.50)
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   item_code = excluded.item_code,
@@ -199,18 +222,21 @@ on conflict (category_id, name_de) do update set
 
 -- N3 Eisschnee, pro Geschmack aufgeteilt (gleiches Prinzip wie N1/N2), alle
 -- Geschmacksrichtungen teilen sich denselben Preis wie auf der Karte angegeben.
+-- Kein Hanzi (siehe Bar-Kategorien oben) — an der Bar wird auf Deutsch gearbeitet.
 insert into menu_items (category_id, name_hanzi, name_de, item_code, price) values
-  ((select id from categories where name_de = 'eisschnee'), '芒果刨冰', 'Eisschnee Mango', 'N3', 6.90),
-  ((select id from categories where name_de = 'eisschnee'), '抹茶刨冰', 'Eisschnee Matcha', 'N3', 6.90),
-  ((select id from categories where name_de = 'eisschnee'), '荔枝刨冰', 'Eisschnee Litchi', 'N3', 6.90),
-  ((select id from categories where name_de = 'eisschnee'), '草莓刨冰', 'Eisschnee Erdbeer', 'N3', 6.90),
-  ((select id from categories where name_de = 'eisschnee'), '奥利奥刨冰', 'Eisschnee Oreo', 'N3', 6.90)
+  ((select id from categories where name_de = 'eisschnee'), null, 'Eisschnee Mango', 'N3', 6.90),
+  ((select id from categories where name_de = 'eisschnee'), null, 'Eisschnee Matcha', 'N3', 6.90),
+  ((select id from categories where name_de = 'eisschnee'), null, 'Eisschnee Litchi', 'N3', 6.90),
+  ((select id from categories where name_de = 'eisschnee'), null, 'Eisschnee Erdbeer', 'N3', 6.90),
+  ((select id from categories where name_de = 'eisschnee'), null, 'Eisschnee Oreo', 'N3', 6.90)
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   item_code = excluded.item_code,
   price = excluded.price;
 
--- Spirituosen — einheitlich 2cl / 4,50€ für alle Sorten laut Karte.
+-- Spirituosen — einheitlich 2cl / 4,50€ für alle Sorten laut Karte, außer Soju/
+-- Makgeolli (ehemals eigene "Schnaps"-Kategorie, siehe Migration weiter oben).
+-- Makgeolli hat vorerst 12,90€ (noch kein endgültiger Preis von der Karte bekannt).
 insert into menu_items (category_id, name_hanzi, name_de, price) values
   ((select id from categories where name_de = 'spirituosen'), null, 'Jägermeister', 4.50),
   ((select id from categories where name_de = 'spirituosen'), null, 'Obstler', 4.50),
@@ -219,7 +245,9 @@ insert into menu_items (category_id, name_hanzi, name_de, price) values
   ((select id from categories where name_de = 'spirituosen'), null, 'Bombay Sapphire', 4.50),
   ((select id from categories where name_de = 'spirituosen'), null, 'Absolut Vodka', 4.50),
   ((select id from categories where name_de = 'spirituosen'), null, 'Jack Daniels', 4.50),
-  ((select id from categories where name_de = 'spirituosen'), null, 'Ramazzotti', 4.50)
+  ((select id from categories where name_de = 'spirituosen'), null, 'Ramazzotti', 4.50),
+  ((select id from categories where name_de = 'spirituosen'), null, 'Soju', 12.90),
+  ((select id from categories where name_de = 'spirituosen'), null, 'Makgeolli', 12.90)
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   price = excluded.price;
@@ -326,20 +354,12 @@ on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   price = excluded.price;
 
--- Schnaps — Makgeolli noch ohne Preis (fehlt in der Vorlage)
-insert into menu_items (category_id, name_hanzi, name_de, price) values
-  ((select id from categories where name_de = 'schnaps'), null, 'Soju', 12.90),
-  ((select id from categories where name_de = 'schnaps'), null, 'Makgeolli', null)
-on conflict (category_id, name_de) do update set
-  name_hanzi = excluded.name_hanzi,
-  price = excluded.price;
-
 -- Diverses: manueller Preis+Beschreibung-Eintrag statt festem Menü-Item (siehe
 -- menu_items.is_custom_entry). OrderScreen.tsx öffnet dafür einen Dialog mit
 -- Freitext-Beschreibung + Preis statt der normalen Varianten/Extras-Auswahl.
 insert into menu_items (category_id, name_hanzi, name_de, is_custom_entry) values
   ((select id from categories where name_de = 'diverses essen'), '其他', 'Diverses', true),
-  ((select id from categories where name_de = 'diverses getränke'), '其他', 'Diverses', true)
+  ((select id from categories where name_de = 'diverses getränke'), null, 'Diverses', true)
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   is_custom_entry = excluded.is_custom_entry;

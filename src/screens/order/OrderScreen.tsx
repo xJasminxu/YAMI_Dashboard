@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMenu } from '../../hooks/useMenu';
 import { supabase } from '../../lib/supabase';
 import type { MenuGroup, MenuItem, VariantOption } from '../../types/database';
@@ -25,6 +26,12 @@ import { useThemedStyles } from '../../theme/useThemedStyles';
 // aktuellen Hell-/Dunkelmodus abhängen (siehe createStyles unten) und sie selbst nicht
 // jeweils einzeln useTheme() aufrufen sollen.
 type OrderStyles = ReturnType<typeof createStyles>;
+
+// TouchableOpacity ist keine Animated-Komponente — ohne diesen Wrapper würde ein
+// Animated.Value im style-Prop nicht reagieren. Wird für die "Zur Bestellung"-Pille
+// gebraucht, damit Tap-Fläche und sichtbare Pille exakt dasselbe Element sind (siehe
+// CartBar) statt eines unsichtbaren Overlays, das sich unabhängig vom Text bewegt hat.
+const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 
 const MENU_GROUP_LABELS: Record<MenuGroup, string> = {
   essen: 'Essen',
@@ -100,6 +107,10 @@ function itemPriceLabel(item: MenuItem): string | null {
 export default function OrderScreen() {
   const navigation = useNavigation();
   const styles = useThemedStyles(createStyles);
+  const insets = useSafeAreaInsets();
+  // Grundabstand + Safe-Area-Inset (Home-Indicator auf iPhones ohne Home-Taste), sonst
+  // klebt die Pille zu dicht in der unteren Ecke.
+  const cartBarBottomOffset = 24 + insets.bottom;
   const { categories, loading, error } = useMenu();
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -115,6 +126,18 @@ export default function OrderScreen() {
   const [cartExpanded, setCartExpanded] = useState(false);
   const cartItemsHeight = useRef(new Animated.Value(CART_ITEMS_COLLAPSED_HEIGHT)).current;
   const dragStartHeight = useRef(CART_ITEMS_COLLAPSED_HEIGHT);
+  // Kurzer "Pop" auf der Warenkorb-Anzeige (Griff-Leiste + Mini-Pill in der Item-Liste),
+  // sobald etwas hinzugefügt wird — vorher änderte sich nur die Zahl, was leicht zu
+  // übersehen war.
+  const cartBumpScale = useRef(new Animated.Value(1)).current;
+
+  function bumpCartIndicator() {
+    cartBumpScale.setValue(1);
+    Animated.sequence([
+      Animated.spring(cartBumpScale, { toValue: 1.25, useNativeDriver: true, speed: 40, bounciness: 5 }),
+      Animated.spring(cartBumpScale, { toValue: 1, useNativeDriver: true, speed: 16, bounciness: 8 }),
+    ]).start();
+  }
 
   function animateCartTo(expand: boolean) {
     setCartExpanded(expand);
@@ -221,6 +244,7 @@ export default function OrderScreen() {
   function addToCart(item: MenuItem, variant: VariantOption | null, extras: CartExtra[] = []) {
     const cartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras);
     const unitPrice = variant?.price ?? item.price ?? null;
+    bumpCartIndicator();
     setCart((prev) => {
       const existing = prev.find((line) => line.cartKey === cartKey);
       if (existing) {
@@ -394,14 +418,29 @@ export default function OrderScreen() {
                 </View>
               )}
               <View style={styles.itemRowText}>
-                <Text style={styles.itemHanzi}>{item.name_hanzi}</Text>
-                <Text style={styles.itemDe}>{item.name_de}</Text>
+                {item.name_hanzi ? (
+                  <>
+                    <Text style={styles.itemHanzi}>{item.name_hanzi}</Text>
+                    <Text style={styles.itemDe}>{item.name_de}</Text>
+                  </>
+                ) : (
+                  // Getränke/Nachspeisen haben kein Hanzi (an der Bar wird auf Deutsch
+                  // gearbeitet) — dann den deutschen Namen groß/prominent zeigen statt
+                  // einer leeren Hanzi-Zeile über einem winzigen deutschen Namen.
+                  <Text style={styles.itemHanzi}>{item.name_de}</Text>
+                )}
               </View>
               {itemPriceLabel(item) && <Text style={styles.itemPrice}>{itemPriceLabel(item)}</Text>}
             </TouchableOpacity>
           )}
         />
-        <CartBar cartCount={cartCount} onPress={() => setActiveCategoryId(null)} styles={styles} />
+        <CartBar
+          cartCount={cartCount}
+          onPress={() => setActiveCategoryId(null)}
+          styles={styles}
+          bumpScale={cartBumpScale}
+          bottomOffset={cartBarBottomOffset}
+        />
         <VariantDialog
           item={variantPromptItem}
           onChoose={chooseVariant}
@@ -460,8 +499,16 @@ export default function OrderScreen() {
                       soleCustomItem ? setCustomEntryItem(soleCustomItem) : setActiveCategoryId(category.id)
                     }
                   >
-                    <Text style={styles.categoryHanzi}>{category.name_hanzi}</Text>
-                    <Text style={styles.categoryDe}>{category.name_de}</Text>
+                    {category.name_hanzi ? (
+                      <>
+                        <Text style={styles.categoryHanzi}>{category.name_hanzi}</Text>
+                        <Text style={styles.categoryDe}>{category.name_de}</Text>
+                      </>
+                    ) : (
+                      // Bar-Kategorien (Getränke/Nachspeisen) haben kein Hanzi — deutschen
+                      // Namen dann groß/prominent zeigen statt einer leeren Hanzi-Zeile.
+                      <Text style={styles.categoryHanzi}>{category.name_de}</Text>
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -479,9 +526,9 @@ export default function OrderScreen() {
             {...cartPanResponder.panHandlers}
           >
             <View style={styles.cartHandleBar} />
-            <Text style={styles.cartHandleText}>
+            <Animated.Text style={[styles.cartHandleText, { transform: [{ scale: cartBumpScale }] }]}>
               {cartCount} im Warenkorb · {formatPrice(cartTotal)} {cartExpanded ? '▾' : '▴'}
-            </Text>
+            </Animated.Text>
           </TouchableOpacity>
           <Animated.View style={[styles.cartItemsWrap, { height: cartItemsHeight }]}>
             <FlatList
@@ -648,16 +695,23 @@ function CartBar({
   cartCount,
   onPress,
   styles,
+  bumpScale,
+  bottomOffset,
 }: {
   cartCount: number;
   onPress: () => void;
   styles: OrderStyles;
+  bumpScale: Animated.Value;
+  bottomOffset: number;
 }) {
   if (cartCount === 0) return null;
   return (
-    <TouchableOpacity style={styles.cartBarMini} onPress={onPress}>
+    <AnimatedTouchableOpacity
+      style={[styles.cartBarMini, { bottom: bottomOffset, transform: [{ scale: bumpScale }] }]}
+      onPress={onPress}
+    >
       <Text style={styles.cartBarMiniText}>{cartCount} im Warenkorb · Zur Bestellung →</Text>
-    </TouchableOpacity>
+    </AnimatedTouchableOpacity>
   );
 }
 
@@ -1175,14 +1229,14 @@ const createStyles = (colors: ThemeColors) =>
     submitButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     cartBarMini: {
       position: 'absolute',
-      bottom: 16,
-      right: 16,
+      bottom: 24,
+      right: 20,
       backgroundColor: '#16a34a',
-      borderRadius: 20,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
+      borderRadius: 28,
+      paddingHorizontal: 24,
+      paddingVertical: 16,
     },
-    cartBarMiniText: { color: '#fff', fontWeight: '700' },
+    cartBarMiniText: { color: '#fff', fontWeight: '700', fontSize: 17 },
     modalOverlay: {
       flex: 1,
       backgroundColor: colors.overlay,

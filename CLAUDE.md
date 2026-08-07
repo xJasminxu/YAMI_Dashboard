@@ -18,9 +18,12 @@ Arbeit, Fehleranfälligkeit, keine Übersicht für die Küche, keine chinesische
 ## Tech-Stack (entschieden)
 
 - **Frontend:** React Native mit Expo, TypeScript
-- **Backend/Realtime:** Supabase (Postgres + Realtime Subscriptions). Noch kein Supabase-
-  Projekt angelegt — Schema liegt unter `supabase/schema.sql` bereit zum Ausführen, sobald
-  ein Projekt existiert.
+- **Backend/Realtime:** Supabase (Postgres + Realtime Subscriptions). Projekt existiert
+  bereits; `supabase/schema.sql` wird als lebendes, idempotentes Migrationsskript erneut
+  eingespielt, wenn sich das Schema ändert (siehe Kommentar am Dateianfang) — neue Spalten
+  also nicht nur in den ursprünglichen `create table`-Block schreiben, sondern zusätzlich
+  per `alter table ... add column if not exists` ergänzen, sonst greift die Änderung nicht
+  bei einer bereits bestehenden Tabelle.
 - **Navigation:** React Navigation
 - **State/Data-Fetching:** Supabase JS Client + Realtime-Channel-Subscriptions, kein
   zusätzliches State-Management-Framework nötig (Datenmenge ist klein).
@@ -32,7 +35,11 @@ Rolle des Geräts:
 
 1. **Bestellung** (Bedienung nimmt auf) — Kategorien als Buttons, Warenkorb, Tisch wählen,
    Bestellung abschicken.
-2. **Küche** — zeigt nur Items mit `target_device = 'kitchen'`.
+2. **Küche** — zeigt nur Items mit `target_device = 'kitchen'`. Der "Offen"-Tab ist in zwei
+   unabhängig scrollbare Spalten aufgeteilt (Vorspeise | Hauptspeise & Barbecue, siehe
+   `categories.kitchen_station`), damit eine große laufende Bestellung nicht die Vorspeisen
+   einer neu eingegangenen Bestellung unter sich verschwinden lässt. Die "Fertig"-Historie
+   bleibt eine einfache Liste.
 3. **Bar** — zeigt nur Items mit `target_device = 'bar'`.
 4. **Status** (optional, für Bedienungen) — Übersicht aller **offenen** Tische mit
    Fortschritt (z.B. "Tisch 4: 2/5 fertig"), gespeist aus denselben Realtime-Daten wie
@@ -62,8 +69,7 @@ Getränke
  - Alkoholfreie Getränke
  - Bier
  - Cocktails
- - Spirituosen
- - Schnaps
+ - Spirituosen (inkl. Soju, Makgeolli)
  - Kaffee/Matcha
 
 Nachspeisen
@@ -85,13 +91,26 @@ und tragen zusätzlich Name auf Hanzi (primär) und Deutsch (sekundär).
 - Barbecue: korean bbq
 
 
-**Bar:** Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Schnaps → Kaffee/Matcha
-→ Nachspeise (Mochi Eis → Eis → Eisschnee). "Schnaps" (Soju/Makgeolli) ist direkt nach
-Spirituosen einsortiert — war in der ursprünglichen Anforderung nicht spezifiziert, bei
-Bedarf Position anpassen.
+**Bar:** Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Kaffee/Matcha
+→ Nachspeise (Mochi Eis → Eis → Eisschnee). Soju und Makgeolli stehen unter Spirituosen
+(die frühere eigene "Schnaps"-Kategorie wurde aufgelöst).
 
 Sortierung ist rein `sort_order`-Feld auf der `categories`-Tabelle, client-seitig angewendet.
 Kein Backend-Logik nötig.
+
+## Küchen-Stationsspalten (Vorspeise / Hauptspeise & Barbecue)
+
+Unabhängig von `sort_order` (das nur die Reihenfolge *innerhalb* einer Ticket-Karte
+bestimmt) hat jede Küchen-Kategorie zusätzlich ein `kitchen_station`-Feld
+(`vorspeise` | `hauptspeise` | `barbecue`), das dieselbe Vorspeise/Hauptspeise/Barbecue-
+Gruppierung wie oben abbildet. `DeviceTicketBoard.tsx` nutzt es, um im "Offen"-Tab der
+Küche zwei separate Spalten zu rendern (Vorspeise links, Hauptspeise+Barbecue rechts),
+jede mit eigenen Ticket-Karten und eigenem Fortschritt (eine Bestellung kann in der
+Vorspeise-Spalte schon grün sein, während ihre Hauptspeise-Karte noch offen ist). Grund:
+ohne die Aufteilung verschwanden die Vorspeisen einer neu eingegangenen Bestellung leicht
+unter einer bereits laufenden großen Bestellung, obwohl Vorspeisen oft sofort losgehen
+könnten. Bar-Kategorien haben `kitchen_station = null` und sind von der Aufteilung nicht
+betroffen — die Bar-Ansicht bleibt eine einzelne Liste.
 
 ## Status-Workflow
 

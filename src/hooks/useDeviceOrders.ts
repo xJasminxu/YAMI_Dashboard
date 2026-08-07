@@ -42,7 +42,7 @@ export function useDeviceOrders(targetDevice: TargetDevice) {
         order:orders!inner(id, table_id, created_at, table:tables(id, number)),
         menu_item:menu_items!inner(
           id, category_id, name_hanzi, name_de, item_code, active, price, created_at,
-          category:categories!inner(id, name_hanzi, name_de, menu_group, target_device, sort_order, created_at)
+          category:categories!inner(id, name_hanzi, name_de, menu_group, target_device, sort_order, kitchen_station, created_at)
         )
         `
       )
