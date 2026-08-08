@@ -400,191 +400,199 @@ export default function OrderScreen() {
     );
   }
 
-  if (activeCategory) {
-    return (
-      <View style={styles.container}>
-        <TouchableOpacity onPress={() => setActiveCategoryId(null)} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Kategorien</Text>
-        </TouchableOpacity>
-        <Text style={styles.sectionTitle}>{activeCategory.name_de}</Text>
-        <FlatList
-          data={activeCategory.items}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.itemRow} onPress={() => handleItemPress(item)}>
-              {item.item_code && (
-                <View style={styles.itemCodeBadge}>
-                  <Text style={styles.itemCodeText}>{item.item_code}</Text>
-                </View>
-              )}
-              <View style={styles.itemRowText}>
-                {item.name_hanzi ? (
-                  <>
-                    <Text style={styles.itemHanzi}>{item.name_hanzi}</Text>
-                    <Text style={styles.itemDe}>{item.name_de}</Text>
-                  </>
-                ) : (
-                  // Getränke/Nachspeisen haben kein Hanzi (an der Bar wird auf Deutsch
-                  // gearbeitet) — dann den deutschen Namen groß/prominent zeigen statt
-                  // einer leeren Hanzi-Zeile über einem winzigen deutschen Namen.
-                  <Text style={styles.itemHanzi}>{item.name_de}</Text>
-                )}
-              </View>
-              {itemPriceLabel(item) && <Text style={styles.itemPrice}>{itemPriceLabel(item)}</Text>}
-            </TouchableOpacity>
-          )}
-        />
-        <CartBar
-          cartCount={cartCount}
-          onPress={() => setActiveCategoryId(null)}
-          styles={styles}
-          bumpScale={cartBumpScale}
-          bottomOffset={cartBarBottomOffset}
-        />
-        <VariantDialog
-          item={variantPromptItem}
-          onChoose={chooseVariant}
-          onCancel={() => setVariantPromptItem(null)}
-          styles={styles}
-        />
-        <ItemOptionsDialog
-          item={optionsPromptItem}
-          onConfirm={confirmOptions}
-          onCancel={() => setOptionsPromptItem(null)}
-          styles={styles}
-        />
-        <LeaveConfirmDialog
-          visible={leaveConfirmVisible}
-          onConfirm={confirmLeave}
-          onCancel={cancelLeave}
-          styles={styles}
-        />
-      </View>
-    );
-  }
-
+  // Alle Dialoge (unten im JSX) werden unabhängig davon gerendert, ob gerade die
+  // Kategorie-Übersicht oder eine Item-Liste angezeigt wird — vorher hingen sie in den
+  // jeweils anderen der beiden früher getrennten return-Zweige und blieben unsichtbar,
+  // wenn z.B. ein "Diverses"-Dialog aus dem falschen Zweig heraus geöffnet wurde (er kam
+  // erst zum Vorschein, sobald man in den Zweig mit dem Dialog zurücknavigierte).
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.tableInput} onPress={() => setNumpadOpen(true)}>
-        <Text style={tableNumber ? styles.tableInputValue : styles.tableInputPlaceholder}>
-          {tableNumber || 'Tischnummer eingeben'}
-        </Text>
-      </TouchableOpacity>
-      <NumpadDialog
-        visible={numpadOpen}
-        value={tableNumber}
-        onChange={setTableNumber}
-        onDone={() => setNumpadOpen(false)}
+      {activeCategory ? (
+        <>
+          <TouchableOpacity onPress={() => setActiveCategoryId(null)} style={styles.backButton}>
+            <Text style={styles.backButtonText}>← Kategorien</Text>
+          </TouchableOpacity>
+          <Text style={styles.sectionTitle}>{activeCategory.name_de}</Text>
+          <FlatList
+            data={activeCategory.items}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={styles.itemRow} onPress={() => handleItemPress(item)}>
+                {item.item_code && (
+                  <View style={styles.itemCodeBadge}>
+                    <Text style={styles.itemCodeText}>{item.item_code}</Text>
+                  </View>
+                )}
+                <View style={styles.itemRowText}>
+                  {item.name_hanzi ? (
+                    <>
+                      <Text style={styles.itemHanzi}>{item.name_hanzi}</Text>
+                      <Text style={styles.itemDe}>{item.name_de}</Text>
+                    </>
+                  ) : (
+                    // Getränke/Nachspeisen haben kein Hanzi (an der Bar wird auf Deutsch
+                    // gearbeitet) — dann den deutschen Namen groß/prominent zeigen statt
+                    // einer leeren Hanzi-Zeile über einem winzigen deutschen Namen.
+                    <Text style={styles.itemHanzi}>{item.name_de}</Text>
+                  )}
+                </View>
+                {itemPriceLabel(item) && <Text style={styles.itemPrice}>{itemPriceLabel(item)}</Text>}
+              </TouchableOpacity>
+            )}
+          />
+          <CartBar
+            cartCount={cartCount}
+            onPress={() => setActiveCategoryId(null)}
+            styles={styles}
+            bumpScale={cartBumpScale}
+            bottomOffset={cartBarBottomOffset}
+          />
+        </>
+      ) : (
+        <>
+          <TouchableOpacity style={styles.tableInput} onPress={() => setNumpadOpen(true)}>
+            <Text style={tableNumber ? styles.tableInputValue : styles.tableInputPlaceholder}>
+              {tableNumber || 'Tischnummer eingeben'}
+            </Text>
+          </TouchableOpacity>
+          <NumpadDialog
+            visible={numpadOpen}
+            value={tableNumber}
+            onChange={setTableNumber}
+            onDone={() => setNumpadOpen(false)}
+            styles={styles}
+          />
+
+          <FlatList
+            data={(Object.keys(groupedCategories) as MenuGroup[]).filter((g) => groupedCategories[g].length > 0)}
+            keyExtractor={(group) => group}
+            renderItem={({ item: group }) => (
+              <View style={styles.groupSection}>
+                <Text style={styles.groupTitle}>{MENU_GROUP_LABELS[group]}</Text>
+                <View style={styles.categoryGrid}>
+                  {groupedCategories[group].map((category) => {
+                    // Kategorien mit einem "Diverses"-Item (siehe seed.sql) verhalten sich wie
+                    // ein eigener Button: direkt den Freitext-Dialog öffnen statt erst in eine
+                    // Item-Liste zu navigieren. find() statt einer strikten
+                    // "genau 1 Item"-Prüfung, damit das auch robust bleibt, falls durch alte/
+                    // doppelte Seed-Daten mal ein zweiter Eintrag in der Kategorie landet — sonst
+                    // fällt der Button auf setActiveCategoryId zurück und der Diverses-Dialog
+                    // (der nur im Kategorie-Übersicht-Zweig lag) blieb bis zum letzten Refactor
+                    // unsichtbar, bis man "← Kategorien" antippte.
+                    const soleCustomItem = category.items.find((i) => i.is_custom_entry) ?? null;
+                    return (
+                      <TouchableOpacity
+                        key={category.id}
+                        style={styles.categoryButton}
+                        onPress={() =>
+                          soleCustomItem ? setCustomEntryItem(soleCustomItem) : setActiveCategoryId(category.id)
+                        }
+                      >
+                        {category.name_hanzi ? (
+                          <>
+                            <Text style={styles.categoryHanzi}>{category.name_hanzi}</Text>
+                            <Text style={styles.categoryDe}>{category.name_de}</Text>
+                          </>
+                        ) : (
+                          // Bar-Kategorien (Getränke/Nachspeisen) haben kein Hanzi — deutschen
+                          // Namen dann groß/prominent zeigen statt einer leeren Hanzi-Zeile.
+                          <Text style={styles.categoryHanzi}>{category.name_de}</Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+          />
+
+          {cart.length > 0 && (
+            <View style={styles.cartPanel}>
+              <TouchableOpacity
+                style={styles.cartHandle}
+                onPress={() => animateCartTo(!cartExpanded)}
+                activeOpacity={0.7}
+                {...cartPanResponder.panHandlers}
+              >
+                <View style={styles.cartHandleBar} />
+                <Animated.Text style={[styles.cartHandleText, { transform: [{ scale: cartBumpScale }] }]}>
+                  {cartCount} im Warenkorb · {formatPrice(cartTotal)} {cartExpanded ? '▾' : '▴'}
+                </Animated.Text>
+              </TouchableOpacity>
+              <Animated.View style={[styles.cartItemsWrap, { height: cartItemsHeight }]}>
+                <FlatList
+                  style={styles.cartItemsList}
+                  data={cart}
+                  keyExtractor={(line) => line.cartKey}
+                  renderItem={({ item: line }) => (
+                    <View style={styles.cartLine}>
+                      <View style={styles.cartLineTextWrap}>
+                        <Text style={styles.cartLineText}>
+                          {line.quantity}× {line.itemCode ? `${line.itemCode} · ` : ''}
+                          {line.nameHanzi} ({line.nameDe})
+                          {line.variantDe ? ` · ${line.variantHanzi} (${line.variantDe})` : ''}
+                        </Text>
+                        {line.extras.length > 0 && (
+                          <Text style={styles.cartLineExtras}>
+                            {line.extras.map((e) => `+${e.quantity} ${e.nameHanzi} (${e.nameDe})`).join(', ')}
+                          </Text>
+                        )}
+                        {lineUnitTotal(line) !== null && (
+                          <Text style={styles.cartLinePrice}>
+                            {formatPrice(lineUnitTotal(line)! * line.quantity)}
+                          </Text>
+                        )}
+                        <TouchableOpacity style={styles.noteField} onPress={() => setNoteEditLine(line)}>
+                          <Text
+                            style={line.note ? styles.noteFieldText : styles.noteFieldPlaceholder}
+                            numberOfLines={2}
+                          >
+                            {line.note || 'Notiz…'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <TouchableOpacity onPress={() => removeFromCart(line.cartKey)}>
+                        <Text style={styles.removeText}>−</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                />
+              </Animated.View>
+              {submitError && <Text style={styles.errorText}>{submitError}</Text>}
+              <View style={styles.cartTotalRow}>
+                <Text style={styles.cartTotalLabel}>
+                  Summe{cartHasUnpricedItem ? ' (unvollständig, s.u.)' : ''}
+                </Text>
+                <Text style={styles.cartTotalValue}>{formatPrice(cartTotal)}</Text>
+              </View>
+              {cartHasUnpricedItem && (
+                <Text style={styles.cartTotalNote}>Enthält Positionen ohne hinterlegten Preis.</Text>
+              )}
+              <TouchableOpacity
+                style={[styles.submitButton, (!tableNumber || submitting) && styles.submitButtonDisabled]}
+                onPress={submitOrder}
+                disabled={!tableNumber || submitting}
+              >
+                <Text style={styles.submitButtonText}>
+                  {submitting ? 'Wird gesendet…' : `Bestellung senden (${cartCount})`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </>
+      )}
+      <VariantDialog
+        item={variantPromptItem}
+        onChoose={chooseVariant}
+        onCancel={() => setVariantPromptItem(null)}
         styles={styles}
       />
-
-      <FlatList
-        data={(Object.keys(groupedCategories) as MenuGroup[]).filter((g) => groupedCategories[g].length > 0)}
-        keyExtractor={(group) => group}
-        renderItem={({ item: group }) => (
-          <View style={styles.groupSection}>
-            <Text style={styles.groupTitle}>{MENU_GROUP_LABELS[group]}</Text>
-            <View style={styles.categoryGrid}>
-              {groupedCategories[group].map((category) => {
-                // Kategorien mit genau einem "Diverses"-Item (siehe seed.sql) verhalten sich
-                // wie ein eigener Button: direkt den Freitext-Dialog öffnen statt erst in
-                // eine Ein-Item-Liste zu navigieren.
-                const soleCustomItem =
-                  category.items.length === 1 && category.items[0].is_custom_entry ? category.items[0] : null;
-                return (
-                  <TouchableOpacity
-                    key={category.id}
-                    style={styles.categoryButton}
-                    onPress={() =>
-                      soleCustomItem ? setCustomEntryItem(soleCustomItem) : setActiveCategoryId(category.id)
-                    }
-                  >
-                    {category.name_hanzi ? (
-                      <>
-                        <Text style={styles.categoryHanzi}>{category.name_hanzi}</Text>
-                        <Text style={styles.categoryDe}>{category.name_de}</Text>
-                      </>
-                    ) : (
-                      // Bar-Kategorien (Getränke/Nachspeisen) haben kein Hanzi — deutschen
-                      // Namen dann groß/prominent zeigen statt einer leeren Hanzi-Zeile.
-                      <Text style={styles.categoryHanzi}>{category.name_de}</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
+      <ItemOptionsDialog
+        item={optionsPromptItem}
+        onConfirm={confirmOptions}
+        onCancel={() => setOptionsPromptItem(null)}
+        styles={styles}
       />
-
-      {cart.length > 0 && (
-        <View style={styles.cartPanel}>
-          <TouchableOpacity
-            style={styles.cartHandle}
-            onPress={() => animateCartTo(!cartExpanded)}
-            activeOpacity={0.7}
-            {...cartPanResponder.panHandlers}
-          >
-            <View style={styles.cartHandleBar} />
-            <Animated.Text style={[styles.cartHandleText, { transform: [{ scale: cartBumpScale }] }]}>
-              {cartCount} im Warenkorb · {formatPrice(cartTotal)} {cartExpanded ? '▾' : '▴'}
-            </Animated.Text>
-          </TouchableOpacity>
-          <Animated.View style={[styles.cartItemsWrap, { height: cartItemsHeight }]}>
-            <FlatList
-              style={styles.cartItemsList}
-              data={cart}
-              keyExtractor={(line) => line.cartKey}
-              renderItem={({ item: line }) => (
-                <View style={styles.cartLine}>
-                  <View style={styles.cartLineTextWrap}>
-                    <Text style={styles.cartLineText}>
-                      {line.quantity}× {line.itemCode ? `${line.itemCode} · ` : ''}
-                      {line.nameHanzi} ({line.nameDe})
-                      {line.variantDe ? ` · ${line.variantHanzi} (${line.variantDe})` : ''}
-                    </Text>
-                    {line.extras.length > 0 && (
-                      <Text style={styles.cartLineExtras}>
-                        {line.extras.map((e) => `+${e.quantity} ${e.nameHanzi} (${e.nameDe})`).join(', ')}
-                      </Text>
-                    )}
-                    {lineUnitTotal(line) !== null && (
-                      <Text style={styles.cartLinePrice}>{formatPrice(lineUnitTotal(line)! * line.quantity)}</Text>
-                    )}
-                    <TouchableOpacity style={styles.noteField} onPress={() => setNoteEditLine(line)}>
-                      <Text style={line.note ? styles.noteFieldText : styles.noteFieldPlaceholder} numberOfLines={2}>
-                        {line.note || 'Notiz…'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <TouchableOpacity onPress={() => removeFromCart(line.cartKey)}>
-                    <Text style={styles.removeText}>−</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            />
-          </Animated.View>
-          {submitError && <Text style={styles.errorText}>{submitError}</Text>}
-          <View style={styles.cartTotalRow}>
-            <Text style={styles.cartTotalLabel}>
-              Summe{cartHasUnpricedItem ? ' (unvollständig, s.u.)' : ''}
-            </Text>
-            <Text style={styles.cartTotalValue}>{formatPrice(cartTotal)}</Text>
-          </View>
-          {cartHasUnpricedItem && (
-            <Text style={styles.cartTotalNote}>Enthält Positionen ohne hinterlegten Preis.</Text>
-          )}
-          <TouchableOpacity
-            style={[styles.submitButton, (!tableNumber || submitting) && styles.submitButtonDisabled]}
-            onPress={submitOrder}
-            disabled={!tableNumber || submitting}
-          >
-            <Text style={styles.submitButtonText}>
-              {submitting ? 'Wird gesendet…' : `Bestellung senden (${cartCount})`}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
       <CustomEntryDialog
         item={customEntryItem}
         onConfirm={confirmCustomEntry}
