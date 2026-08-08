@@ -16,15 +16,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import ThemeToggleButton from '../../components/ThemeToggleButton';
 import { useMenu } from '../../hooks/useMenu';
 import { supabase } from '../../lib/supabase';
 import type { MenuGroup, MenuItem, VariantOption } from '../../types/database';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
-
-const MENU_PDF = require('../../../assets/yami-speisekarte-2.pdf');
-const DRINKS_PDF = require('../../../assets/getraenkekarte.pdf');
 
 // Wird als Prop an alle Dialog-Unterkomponenten weitergereicht, da deren Farben vom
 // aktuellen Hell-/Dunkelmodus abhängen (siehe createStyles unten) und sie selbst nicht
@@ -218,35 +214,6 @@ export default function OrderScreen() {
   // stoppen, aber sichtbar mit einem kurzen Ruckler. Mit einem eigenen JS-Button, der
   // navigation.goBack() aufruft, läuft der beforeRemove-Check zuerst und der Dialog
   // öffnet sich ohne jegliche Übergangsanimation — "sofort" im eigentlichen Sinn.
-  //
-  // headerRight überschreibt hier zusätzlich den globalen ThemeToggleButton aus
-  // RootNavigator (screenOptions), um links davon zwei Buttons für Speisekarte/
-  // Getränkekarte als PDF einzublenden — nur auf diesem Screen relevant, deshalb
-  // lokal statt global gesetzt.
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <View style={styles.headerRightRow}>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('PdfViewer', { moduleId: MENU_PDF, title: 'Speisekarte' })}
-            style={styles.headerPdfButton}
-            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-          >
-            <Text style={styles.headerPdfButtonText}>Speisekarte</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('PdfViewer', { moduleId: DRINKS_PDF, title: 'Getränkekarte' })}
-            style={styles.headerPdfButton}
-            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-          >
-            <Text style={styles.headerPdfButtonText}>Getränke</Text>
-          </TouchableOpacity>
-          <ThemeToggleButton />
-        </View>
-      ),
-    });
-  }, [navigation]);
-
   useLayoutEffect(() => {
     navigation.setOptions({
       headerLeft: () => (
@@ -1110,14 +1077,6 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     headerBackButton: { paddingHorizontal: 8, paddingVertical: 4 },
     headerBackButtonText: { fontSize: 17, color: colors.primary },
-    headerRightRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    headerPdfButton: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 8,
-      backgroundColor: colors.surfaceAlt,
-    },
-    headerPdfButtonText: { fontSize: 13, fontWeight: '600', color: colors.primary },
     container: { flex: 1, backgroundColor: colors.background, padding: 16 },
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
     errorText: { color: colors.danger },

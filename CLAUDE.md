@@ -27,15 +27,6 @@ Arbeit, Fehleranfälligkeit, keine Übersicht für die Küche, keine chinesische
 - **Navigation:** React Navigation
 - **State/Data-Fetching:** Supabase JS Client + Realtime-Channel-Subscriptions, kein
   zusätzliches State-Management-Framework nötig (Datenmenge ist klein).
-- **PDF-Anzeige (Speisekarte/Getränkekarte in der Bestellaufnahme):** `react-native-pdf`
-  (+ `react-native-blob-util`) rendert die als Asset gebündelten PDFs nativ in einem
-  eigenen Screen (`PdfViewerScreen.tsx`), statt sie über den OS-Share-Dialog zu öffnen.
-  Das sind native Module, die **nicht** in Expo Go enthalten sind — die App läuft deshalb
-  nicht mehr in Expo Go, sondern braucht einen eigenen Dev-Client
-  (`npx expo prebuild` + `npx expo run:ios` / `npx expo run:android`, oder ein Dev-Build
-  über EAS Build). Für reines Web/schnelles Iterieren an UI ohne PDF-Screen ginge Expo Go
-  zwar theoretisch weiter, aber der Custom-Dev-Client ist der Weg, der für alle Rollen
-  funktioniert.
 
 ## Architekturprinzip: eine Codebase, fünf Rollen
 
