@@ -6,6 +6,32 @@ export interface CategoryWithItems extends Category {
   items: MenuItem[];
 }
 
+// Sortiert die Items einer Kategorie nach ihrem Item-Code in "natürlicher" Reihenfolge
+// (R1, R2, ..., R10 statt lexikografisch R1, R10, R2, ...) statt sich auf die
+// DB-Einfüge-Reihenfolge (created_at) zu verlassen — die spiegelt nur wider, wann ein
+// Item zuletzt (neu) angelegt wurde, nicht die gewünschte Speisekarten-Reihenfolge (z.B.
+// wenn ein Ramen-Item nachträglich bearbeitet oder ein Item erst später ergänzt wurde,
+// stand es plötzlich nicht mehr an seiner R1..R6-Position). Items ohne Code (z.B.
+// Getränke) behalten ihre bisherige (created_at-)Reihenfolge und landen hinter allen
+// codierten Items derselben Kategorie.
+function compareItemCode(a: MenuItem, b: MenuItem): number {
+  if (!a.item_code && !b.item_code) return 0;
+  if (!a.item_code) return 1;
+  if (!b.item_code) return -1;
+
+  const aMatch = a.item_code.match(/^([A-Za-z]*)(\d*)/);
+  const bMatch = b.item_code.match(/^([A-Za-z]*)(\d*)/);
+  const aLetters = aMatch?.[1] ?? '';
+  const bLetters = bMatch?.[1] ?? '';
+  if (aLetters !== bLetters) return aLetters.localeCompare(bLetters);
+
+  const aNum = aMatch?.[2] ? parseInt(aMatch[2], 10) : NaN;
+  const bNum = bMatch?.[2] ? parseInt(bMatch[2], 10) : NaN;
+  if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) return aNum - bNum;
+
+  return a.item_code.localeCompare(b.item_code);
+}
+
 // Lädt aktive Menü-Items gruppiert nach Kategorie, für die Bestellaufnahme.
 // Statisch genug, um einmalig zu laden statt per Realtime-Subscription.
 export function useMenu() {
@@ -35,6 +61,9 @@ export function useMenu() {
         const list = itemsByCategory.get(item.category_id) ?? [];
         list.push(item);
         itemsByCategory.set(item.category_id, list);
+      }
+      for (const list of itemsByCategory.values()) {
+        list.sort(compareItemCode);
       }
 
       setCategories(

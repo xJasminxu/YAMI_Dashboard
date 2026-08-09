@@ -293,15 +293,15 @@ on conflict (category_id, name_de) do update set
 -- gleiche Preise wie die Softgetränke (2,90€/3,90€, unabhängig von Saft vs. Schorle).
 insert into menu_items (category_id, name_hanzi, name_de, variant_options) values
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Johannisbeere',
-    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 2.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 3.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
+    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Mango',
-    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 2.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 3.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
+    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Lychee',
-    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 2.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 3.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
+    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Maracuja',
-    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 2.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 3.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
+    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Orange',
-    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 2.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 3.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]')
+    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   variant_options = excluded.variant_options;
