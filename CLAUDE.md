@@ -70,7 +70,9 @@ Getränke
  - Bier
  - Cocktails
  - Spirituosen (inkl. Soju, Makgeolli)
- - Kaffee/Matcha
+ - Wein (Rot: Merlot, Primitivo, Dornfelder; Weiß: Pinot, Chardonnay, Riesling —
+   0,2L-Glas 5,90€ für beide, Flasche 28,00€ rot / 26,00€ weiß)
+ - Kaffee/Tee/Matcha
 
 Nachspeisen
  - Mochi Eis
@@ -91,7 +93,7 @@ und tragen zusätzlich Name auf Hanzi (primär) und Deutsch (sekundär).
 - Barbecue: korean bbq
 
 
-**Bar:** Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Kaffee/Matcha
+**Bar:** Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Wein → Kaffee/Tee/Matcha
 → Nachspeise (Mochi Eis → Eis → Eisschnee). Soju und Makgeolli stehen unter Spirituosen
 (die frühere eigene "Schnaps"-Kategorie wurde aufgelöst).
 

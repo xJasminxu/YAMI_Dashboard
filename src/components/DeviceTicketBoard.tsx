@@ -418,7 +418,11 @@ const createStyles = (colors: ThemeColors) =>
     bellButtonTextLarge: { fontSize: 32 },
     // "Nichts zu tun"-Banner statt Ticket-Liste, siehe EmptyBoardBanner — Text links,
     // Bild rechts. Bild-Breite fix, Höhe über aspectRatio (Originalbild ist 1200×1600,
-    // also Hochformat 3:4) statt fixer Höhe, damit es nicht verzerrt wird.
+    // also Hochformat 3:4) statt fixer Höhe, damit es nicht verzerrt wird. overflow:
+    // 'hidden' als Sicherheitsnetz — Views clippen in RN standardmäßig NICHT, ein zu
+    // großes Bild würde sonst optisch (und für Touches!) über den Container hinaus in
+    // die Tableiste darüber hineinragen, wie bei Breite 660 auf der Küche geschehen
+    // (660 × 4/3 ≈ 880 hoch, mehr als der verfügbare Platz unter der Tableiste).
     emptyBanner: {
       flex: 1,
       flexDirection: 'row',
@@ -426,6 +430,7 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
       paddingHorizontal: 24,
       gap: 20,
+      overflow: 'hidden',
     },
     emptyBannerText: {
       flex: 1,
@@ -436,7 +441,7 @@ const createStyles = (colors: ThemeColors) =>
     },
     emptyBannerTextLarge: { fontSize: 78 },
     emptyBannerImage: { width: 420, aspectRatio: 3 / 4 },
-    emptyBannerImageLarge: { width: 660 },
+    emptyBannerImageLarge: { width: 280 },
     // Zwei-Spalten-Ansicht für die Küche (Vorspeise | Hauptspeise+Barbecue), jede
     // Spalte unabhängig scrollbar, damit eine große Hauptspeise-Bestellung nicht mehr
     // die Vorspeisen einer neuen Bestellung von der Küche wegscrollt.

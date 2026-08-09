@@ -36,11 +36,19 @@ on conflict (name_de) do update set
   sort_order = excluded.sort_order,
   kitchen_station = excluded.kitchen_station;
 
+-- Migration: 'kaffee/matcha' → 'kaffee/tee/matcha', jetzt wo auch Tee dort steht (siehe
+-- weiter unten). Reine Umbenennung des Namens/Schlüssels per UPDATE statt neuem
+-- insert+delete — menu_items hängen per category_id (nicht per Name) an der Kategorie,
+-- die Umbenennung bewegt also keine bestehenden Items. Auf einer frischen Datenbank
+-- (die 'kaffee/matcha' nie hatte) matcht das UPDATE nichts und ist ein No-op; der
+-- eigentliche Name kommt dann direkt aus dem insert unten.
+update categories set name_de = 'kaffee/tee/matcha' where name_de = 'kaffee/matcha';
+
 -- Getränke + Nachspeisen → Bar
--- Sortierung: Alkoholfreie Getränke → Bier → Cocktails → Spirituosen
--- → Kaffee/Matcha → Nachspeise (Mochi Eis → Eis → Eisschnee).
+-- Sortierung: Alkoholfreie Getränke → Bier → Cocktails → Spirituosen → Wein
+-- → Kaffee/Tee/Matcha → Nachspeise (Mochi Eis → Eis → Eisschnee).
 -- Die frühere eigene "Schnaps"-Kategorie (Soju/Makgeolli) wurde aufgelöst —
--- beide Getränke stehen jetzt unter Spirituosen (siehe Migration unten).
+-- beide Getränke stehen jetzt unter Spirituosen (siehe Migration weiter oben).
 -- Kein Hanzi für Bar-Kategorien (Getränke/Nachspeisen) — an der Bar wird auf Deutsch
 -- gearbeitet, Hanzi ist primär für die Küche. OrderScreen.tsx/DeviceTicketBoard.tsx
 -- zeigen bei fehlendem Hanzi stattdessen den deutschen Namen groß/prominent an.
@@ -49,10 +57,11 @@ insert into categories (name_hanzi, name_de, menu_group, target_device, sort_ord
   (null, 'bier', 'getraenke', 'bar', 2),
   (null, 'cocktails', 'getraenke', 'bar', 3),
   (null, 'spirituosen', 'getraenke', 'bar', 4),
-  (null, 'kaffee/matcha', 'getraenke', 'bar', 5),
-  (null, 'mochi eis', 'nachspeisen', 'bar', 6),
-  (null, 'eis', 'nachspeisen', 'bar', 7),
-  (null, 'eisschnee', 'nachspeisen', 'bar', 8)
+  (null, 'wein', 'getraenke', 'bar', 5),
+  (null, 'kaffee/tee/matcha', 'getraenke', 'bar', 6),
+  (null, 'mochi eis', 'nachspeisen', 'bar', 7),
+  (null, 'eis', 'nachspeisen', 'bar', 8),
+  (null, 'eisschnee', 'nachspeisen', 'bar', 9)
 on conflict (name_de) do update set
   name_hanzi = excluded.name_hanzi,
   menu_group = excluded.menu_group,
@@ -79,7 +88,7 @@ delete from categories where name_de = 'schnaps';
 -- da nicht vorhersehbar ist, was frei eingetragen wird.
 insert into categories (name_hanzi, name_de, menu_group, target_device, sort_order, kitchen_station) values
   ('其他菜品', 'diverses essen', 'essen', 'kitchen', 8, 'hauptspeise'),
-  (null, 'diverses getränke', 'getraenke', 'bar', 9, null)
+  (null, 'diverses getränke', 'getraenke', 'bar', 10, null)
 on conflict (name_de) do update set
   name_hanzi = excluded.name_hanzi,
   menu_group = excluded.menu_group,
@@ -252,15 +261,41 @@ on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   price = excluded.price;
 
--- Kaffee / Matcha
+-- Wein — 0,2L-Glas einheitlich 5,90€ für Rot- wie Weißwein, die Flasche unterscheidet
+-- sich (Rotwein 28,00€/Flasche, Weißwein 26,00€/Flasche), deshalb Mengen-/Preis-Dialog
+-- über variant_options statt einem festen menu_items.price. Kein Hanzi wie der Rest der
+-- Bar-Karte — an der Bar wird auf Deutsch gearbeitet. Rot/Weiß ist nicht als eigenes
+-- Feld im Datenmodell abgebildet, sondern ergibt sich aus der Rebsorte im Namen (Merlot/
+-- Primitivo/Dornfelder = rot, Pinot/Chardonnay/Riesling = weiß) — dieselbe flache
+-- Item-Liste pro Kategorie wie überall sonst (z.B. Cocktails, Bier).
+insert into menu_items (category_id, name_hanzi, name_de, variant_options) values
+  ((select id from categories where name_de = 'wein'), null, 'Merlot (trocken)',
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 5.90}, {"name_hanzi": "Flasche", "name_de": "Flasche", "price": 28.00}]'),
+  ((select id from categories where name_de = 'wein'), null, 'Primitivo (trocken)',
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 5.90}, {"name_hanzi": "Flasche", "name_de": "Flasche", "price": 28.00}]'),
+  ((select id from categories where name_de = 'wein'), null, 'Dornfelder (halbtrocken)',
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 5.90}, {"name_hanzi": "Flasche", "name_de": "Flasche", "price": 28.00}]'),
+  ((select id from categories where name_de = 'wein'), null, 'Pinot (trocken)',
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 5.90}, {"name_hanzi": "Flasche", "name_de": "Flasche", "price": 26.00}]'),
+  ((select id from categories where name_de = 'wein'), null, 'Chardonnay (trocken)',
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 5.90}, {"name_hanzi": "Flasche", "name_de": "Flasche", "price": 26.00}]'),
+  ((select id from categories where name_de = 'wein'), null, 'Riesling (halbtrocken)',
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 5.90}, {"name_hanzi": "Flasche", "name_de": "Flasche", "price": 26.00}]')
+on conflict (category_id, name_de) do update set
+  name_hanzi = excluded.name_hanzi,
+  variant_options = excluded.variant_options;
+
+-- Kaffee / Tee / Matcha
 insert into menu_items (category_id, name_hanzi, name_de, price) values
-  ((select id from categories where name_de = 'kaffee/matcha'), null, 'Espresso', 2.90),
-  ((select id from categories where name_de = 'kaffee/matcha'), null, 'Café Crème', 4.20),
-  ((select id from categories where name_de = 'kaffee/matcha'), null, 'Latte Macchiato', 4.20),
-  ((select id from categories where name_de = 'kaffee/matcha'), null, 'Cappuccino', 4.20),
-  ((select id from categories where name_de = 'kaffee/matcha'), null, 'Eiskaffee', 6.50),
-  ((select id from categories where name_de = 'kaffee/matcha'), null, 'Erdbeer-Matcha-Latte', 6.50),
-  ((select id from categories where name_de = 'kaffee/matcha'), null, 'Litschi-Kokos-Matcha-Latte', 5.90)
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Espresso', 2.90),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Café Crème', 4.20),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Latte Macchiato', 4.20),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Cappuccino', 4.20),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Eiskaffee', 6.50),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Erdbeer-Matcha-Latte', 6.50),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Litschi-Kokos-Matcha-Latte', 5.90),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Grüner Tee', 2.50),
+  ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Jasmin Tee', 2.50)
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   price = excluded.price;
@@ -276,6 +311,8 @@ insert into menu_items (category_id, name_hanzi, name_de, variant_options) value
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Sprite',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Fanta',
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
+  ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Milkis',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
@@ -293,6 +330,8 @@ on conflict (category_id, name_de) do update set
 -- gleiche Preise wie die Softgetränke (2,90€/3,90€, unabhängig von Saft vs. Schorle).
 insert into menu_items (category_id, name_hanzi, name_de, variant_options) values
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Johannisbeere',
+    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
+  ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Apfel',
     '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Mango',
     '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
@@ -344,12 +383,16 @@ on conflict (category_id, name_de) do update set
 -- Bier — alle Sorten einheitlich 4,20
 insert into menu_items (category_id, name_hanzi, name_de, price) values
   ((select id from categories where name_de = 'bier'), null, 'Helles', 4.20),
+  ((select id from categories where name_de = 'bier'), null, 'Dunkles Bier', 4.20),
   ((select id from categories where name_de = 'bier'), null, 'Weizen', 4.20),
+  ((select id from categories where name_de = 'bier'), null, 'Dunkles Weizen', 4.20),
   ((select id from categories where name_de = 'bier'), null, 'Radler', 4.20),
   ((select id from categories where name_de = 'bier'), null, 'Cola-Weizen', 4.20),
   ((select id from categories where name_de = 'bier'), null, 'Russ', 4.20),
   ((select id from categories where name_de = 'bier'), null, 'Alkoholfreies Bier', 4.20),
-  ((select id from categories where name_de = 'bier'), null, 'Alkoholfreies Weizen', 4.20)
+  ((select id from categories where name_de = 'bier'), null, 'Alkoholfreies Weizen', 4.20),
+  ((select id from categories where name_de = 'bier'), null, 'Leichtes Weizen', 4.20)
+
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   price = excluded.price;
