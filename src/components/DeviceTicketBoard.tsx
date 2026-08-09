@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDeviceOrders, type GroupedOrder } from '../hooks/useDeviceOrders';
@@ -11,6 +11,10 @@ import { useThemedStyles } from '../theme/useThemedStyles';
 
 type Tab = 'offen' | 'fertig';
 type BoardStyles = ReturnType<typeof createStyles>;
+
+// Zeigt sich, wenn im "Offen"-Tab (Küche oder Bar) gerade nichts zu tun ist — links
+// der Spruch, rechts das Bild, siehe EmptyBoardBanner unten.
+const IMPATIENT_HONGBIN = require('../../assets/impatient_hongbin.png');
 
 // Eigener Key pro Gerät (Küche/Bar), falls dasselbe Tablet doch mal die Rolle wechselt —
 // die Stumm-Einstellung der Küche soll dann nicht ungefragt auch für die Bar gelten.
@@ -171,7 +175,9 @@ export default function DeviceTicketBoard({
         </TouchableOpacity>
       </View>
 
-      {showStationColumns ? (
+      {tab === 'offen' && open.length === 0 ? (
+        <EmptyBoardBanner large={large} styles={styles} />
+      ) : showStationColumns ? (
         <View style={styles.stationRow}>
           <View style={styles.stationColumn}>
             <StationHeader title="Vorspeise" openCount={countOpenItems(vorspeiseOrders)} large={large} styles={styles} />
@@ -218,6 +224,26 @@ export default function DeviceTicketBoard({
           emptyText={tab === 'offen' ? 'Keine offenen Bestellungen.' : 'Noch keine erledigten Bestellungen.'}
         />
       )}
+    </View>
+  );
+}
+
+// Ersetzt die Ticket-Liste komplett, solange im "Offen"-Tab nichts ansteht (statt nur
+// eines schlichten ListEmptyComponent-Texts wie sonst) — ein kleiner Spaß für die Küche/
+// Bar in ruhigen Momenten. Bei der Küche mit ihrer Zwei-Spalten-Ansicht gilt das für beide
+// Spalten gleichzeitig (dieselbe `open`-Liste speist beide), deshalb einmal über dem
+// ganzen Board statt einmal pro Spalte.
+function EmptyBoardBanner({ large, styles }: { large: boolean; styles: BoardStyles }) {
+  return (
+    <View style={styles.emptyBanner}>
+      <Text style={[styles.emptyBannerText, large && styles.emptyBannerTextLarge]}>
+        啊呀怎么没事情干啊😔😔😔
+      </Text>
+      <Image
+        source={IMPATIENT_HONGBIN}
+        style={[styles.emptyBannerImage, large && styles.emptyBannerImageLarge]}
+        resizeMode="contain"
+      />
     </View>
   );
 }
@@ -390,6 +416,27 @@ const createStyles = (colors: ThemeColors) =>
     bellButtonLarge: { paddingHorizontal: 18, paddingVertical: 14 },
     bellButtonText: { fontSize: 22 },
     bellButtonTextLarge: { fontSize: 32 },
+    // "Nichts zu tun"-Banner statt Ticket-Liste, siehe EmptyBoardBanner — Text links,
+    // Bild rechts. Bild-Breite fix, Höhe über aspectRatio (Originalbild ist 1200×1600,
+    // also Hochformat 3:4) statt fixer Höhe, damit es nicht verzerrt wird.
+    emptyBanner: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+      gap: 20,
+    },
+    emptyBannerText: {
+      flex: 1,
+      fontSize: 54,
+      fontWeight: '600',
+      color: colors.textMuted,
+      textAlign: 'right',
+    },
+    emptyBannerTextLarge: { fontSize: 78 },
+    emptyBannerImage: { width: 420, aspectRatio: 3 / 4 },
+    emptyBannerImageLarge: { width: 660 },
     // Zwei-Spalten-Ansicht für die Küche (Vorspeise | Hauptspeise+Barbecue), jede
     // Spalte unabhängig scrollbar, damit eine große Hauptspeise-Bestellung nicht mehr
     // die Vorspeisen einer neuen Bestellung von der Küche wegscrollt.
