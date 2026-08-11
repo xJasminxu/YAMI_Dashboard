@@ -120,6 +120,7 @@ export default function OrderScreen() {
   const [variantPromptItem, setVariantPromptItem] = useState<MenuItem | null>(null);
   const [optionsPromptItem, setOptionsPromptItem] = useState<MenuItem | null>(null);
   const [customEntryItem, setCustomEntryItem] = useState<MenuItem | null>(null);
+  const [rabattDialogOpen, setRabattDialogOpen] = useState(false);
   const [numpadOpen, setNumpadOpen] = useState(false);
   const [noteEditLine, setNoteEditLine] = useState<CartLine | null>(null);
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
@@ -231,10 +232,17 @@ export default function OrderScreen() {
   const groupedCategories = useMemo(() => {
     const groups: Record<MenuGroup, typeof categories> = { essen: [], getraenke: [], nachspeisen: [] };
     for (const category of categories) {
+      // Rabatt ist kein Menü-Button — eigener Button unten (siehe rabattItem), nicht Teil
+      // des Essen/Getränke/Nachspeisen-Rasters.
+      if (category.is_discount) continue;
       groups[category.menu_group].push(category);
     }
     return groups;
   }, [categories]);
+
+  // Das einzelne Item der Rabatt-Kategorie (siehe seed.sql) — trägt Beschreibung + Betrag
+  // huckepack über den Varianten-Mechanismus wie das Diverses-Item (siehe confirmRabatt).
+  const rabattItem = useMemo(() => categories.find((c) => c.is_discount)?.items[0] ?? null, [categories]);
 
   const activeCategory = categories.find((c) => c.id === activeCategoryId) ?? null;
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
@@ -310,6 +318,15 @@ export default function OrderScreen() {
     setCustomEntryItem(null);
   }
 
+  function confirmRabatt(description: string, amount: number) {
+    if (!rabattItem) return;
+    const label = description.trim() || 'Rabatt';
+    // Wie confirmCustomEntry: Beschreibung + (negativer) Betrag fahren huckepack auf dem
+    // Varianten-Mechanismus mit, statt eines eigenen Datenpfads.
+    addToCart(rabattItem, { name_hanzi: label, name_de: label, price: -Math.abs(amount) });
+    setRabattDialogOpen(false);
+  }
+
   function confirmOptions(variant: VariantOption | null, extras: CartExtra[]) {
     if (!optionsPromptItem) return;
     addToCart(optionsPromptItem, variant, extras.filter((e) => e.quantity > 0));
@@ -355,8 +372,13 @@ export default function OrderScreen() {
       return;
     }
 
-    const rows = cart.flatMap((line) =>
-      Array.from({ length: line.quantity }, () => ({
+    const rows = cart.flatMap((line) => {
+      // Rabatt-Positionen sind nichts zum Zubereiten (siehe rabattItem/confirmRabatt) —
+      // gehen deshalb direkt als "fertig" rein, statt in Küche/Bar als offen zu hängen
+      // (DeviceTicketBoard.tsx blendet sie zwar ohnehin aus, aber ohne done_at würden sie
+      // z.B. in StatusScreen.tsx die Fortschritts-Zählung eines Tisches verfälschen).
+      const isRabatt = line.menuItemId === rabattItem?.id;
+      return Array.from({ length: line.quantity }, () => ({
         order_id: order.id,
         menu_item_id: line.menuItemId,
         variant_hanzi: line.variantHanzi,
@@ -367,8 +389,9 @@ export default function OrderScreen() {
             : null,
         unit_price: line.unitPrice,
         note: line.note.trim() ? line.note.trim() : null,
-      }))
-    );
+        ...(isRabatt ? { status: 'fertig' as const, done_at: new Date().toISOString() } : {}),
+      }));
+    });
 
     const { error: itemsError } = await supabase.from('order_items').insert(rows);
 
@@ -460,6 +483,18 @@ export default function OrderScreen() {
             value={tableNumber}
             onChange={setTableNumber}
             onDone={() => setNumpadOpen(false)}
+            styles={styles}
+          />
+
+          {rabattItem && (
+            <TouchableOpacity style={styles.rabattButton} onPress={() => setRabattDialogOpen(true)}>
+              <Text style={styles.rabattButtonText}>− Rabatt hinzufügen</Text>
+            </TouchableOpacity>
+          )}
+          <RabattDialog
+            visible={rabattDialogOpen}
+            onConfirm={confirmRabatt}
+            onCancel={() => setRabattDialogOpen(false)}
             styles={styles}
           />
 
@@ -844,6 +879,89 @@ function CustomEntryDialog({
   );
 }
 
+// Dialog für die Rabatt-Kategorie (siehe rabattItem/confirmRabatt): Bedienung trägt eine
+// optionale Beschreibung + einen Betrag ein, der als Preis-Abzug (negativer Preis) in den
+// Warenkorb wandert. Strukturell fast identisch zu CustomEntryDialog, aber Beschreibung
+// ist hier optional (fällt auf "Rabatt" zurück) statt Pflichtfeld, und der Betrag wird
+// beim Bestätigen negiert statt roh übernommen.
+function RabattDialog({
+  visible,
+  onConfirm,
+  onCancel,
+  styles,
+}: {
+  visible: boolean;
+  onConfirm: (description: string, amount: number) => void;
+  onCancel: () => void;
+  styles: OrderStyles;
+}) {
+  const [description, setDescription] = useState('');
+  const [amountText, setAmountText] = useState('');
+  const [amountNumpadOpen, setAmountNumpadOpen] = useState(false);
+
+  // Bei jedem Öffnen die lokale Eingabe zurücksetzen (gleiches Muster wie CustomEntryDialog).
+  const [resetForOpen, setResetForOpen] = useState(false);
+  if (visible !== resetForOpen) {
+    setResetForOpen(visible);
+    if (visible) {
+      setDescription('');
+      setAmountText('');
+      setAmountNumpadOpen(false);
+    }
+  }
+
+  const normalized = amountText.trim().replace(',', '.');
+  const parsedAmount = normalized ? Number.parseFloat(normalized) : NaN;
+  const canConfirm = Number.isFinite(parsedAmount) && parsedAmount > 0;
+
+  function handleConfirm() {
+    if (!canConfirm) return;
+    onConfirm(description, parsedAmount);
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Rabatt</Text>
+          <TextInput
+            style={styles.customEntryInput}
+            placeholder="Beschreibung (optional)"
+            value={description}
+            onChangeText={setDescription}
+            autoFocus
+          />
+          <TouchableOpacity style={styles.customEntryInput} onPress={() => setAmountNumpadOpen(true)}>
+            <Text style={amountText ? styles.tableInputValue : styles.tableInputPlaceholder}>
+              {amountText ? `− ${amountText} €` : 'Rabattbetrag eingeben'}
+            </Text>
+          </TouchableOpacity>
+          <PriceNumpadDialog
+            visible={amountNumpadOpen}
+            value={amountText}
+            onChange={setAmountText}
+            onDone={() => setAmountNumpadOpen(false)}
+            styles={styles}
+          />
+          <TouchableOpacity
+            style={[styles.submitButton, !canConfirm && styles.submitButtonDisabled]}
+            onPress={handleConfirm}
+            disabled={!canConfirm}
+          >
+            <Text style={styles.submitButtonText}>Zum Warenkorb hinzufügen</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
+            <Text style={styles.modalCancelText}>Abbrechen</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 // Eigener Dialog statt Inline-TextInput im Warenkorb: das Notizfeld saß bisher unten in
 // der (ohnehin schon eingeklappten) Warenkorb-Leiste, wo die Tastatur beim Tippen den
 // Eingabefokus verdeckte. Als KeyboardAvoidingView-Dialog bleibt das Feld immer sichtbar.
@@ -1098,6 +1216,15 @@ const createStyles = (colors: ThemeColors) =>
     },
     tableInputValue: { fontSize: 16, color: colors.text, fontWeight: '600' },
     tableInputPlaceholder: { fontSize: 16, color: colors.textFaint },
+    rabattButton: {
+      borderWidth: 1,
+      borderColor: colors.warning,
+      borderRadius: 8,
+      paddingVertical: 10,
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    rabattButtonText: { fontSize: 15, fontWeight: '700', color: colors.warning },
     numpadDisplay: {
       fontSize: 32,
       fontWeight: '700',

@@ -17,6 +17,9 @@ export interface Category {
   target_device: TargetDevice;
   sort_order: number;
   kitchen_station: KitchenStation | null;
+  // true = Rabatt-Kategorie (siehe seed.sql) — Preis-Abzug statt zuzubereitendem
+  // Gericht/Getränk. DeviceTicketBoard.tsx blendet ihre Positionen deshalb aus.
+  is_discount: boolean;
   created_at: string;
 }
 

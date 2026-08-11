@@ -46,6 +46,15 @@ alter table categories alter column name_hanzi drop not null;
 alter table categories add column if not exists kitchen_station text
   check (kitchen_station in ('vorspeise', 'hauptspeise', 'barbecue'));
 
+-- Migration: is_discount-Spalte (nachträglich hinzugefügt). Markiert die "Rabatt"-
+-- Kategorie (siehe seed.sql) — ihre Positionen sind Preis-Abzüge, die die Bedienung im
+-- Bestell-Screen mit Beschreibung + Betrag hinzufügt, keine zuzubereitenden Gerichte/
+-- Getränke. DeviceTicketBoard.tsx blendet Positionen aus is_discount-Kategorien deshalb
+-- aus den Küchen-/Bar-Tickets aus; in der Tischübersicht/vorläufigen Abrechnung
+-- (TableBillingScreen.tsx etc.) bleiben sie sichtbar, damit der Rabatt vom Gesamtbetrag
+-- abgezogen wird.
+alter table categories add column if not exists is_discount boolean not null default false;
+
 -- ---------------------------------------------------------------------------
 -- menu_items
 -- Konkrete Gerichte/Getränke innerhalb einer Kategorie.

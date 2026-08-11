@@ -82,7 +82,20 @@ export default function DeviceTicketBoard({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const cardBackground = useMemo(() => cardBackgroundFor(colors), [colors]);
-  const { orders, loading, error, setItemStatus, setItemsStatus } = useDeviceOrders(targetDevice);
+  const { orders: rawOrders, loading, error, setItemStatus, setItemsStatus } = useDeviceOrders(targetDevice);
+  // Rabatt-Positionen sind Preis-Abzüge, kein zuzubereitendes Gericht/Getränk (siehe
+  // categories.is_discount) — auf Küchen-/Bar-Tickets werden sie deshalb ausgeblendet,
+  // bleiben aber in Tischübersicht/Abrechnung sichtbar (die nutzen useDeviceOrders direkt).
+  const orders = useMemo(
+    () =>
+      rawOrders
+        .map((order) => ({
+          ...order,
+          items: order.items.filter((item) => !item.menu_item.category.is_discount),
+        }))
+        .filter((order) => order.items.length > 0),
+    [rawOrders]
+  );
   const [tab, setTab] = useState<Tab>('offen');
   // Standardmäßig an — Küche/Bar können den Ton per Glocken-Button stumm schalten
   // (z.B. während einer Pause). Wird in AsyncStorage gemerkt, damit die Einstellung
