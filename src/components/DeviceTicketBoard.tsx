@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDeviceOrders, type GroupedOrder } from '../hooks/useDeviceOrders';
 import { useNewOrderChime } from '../hooks/useNewOrderChime';
@@ -10,6 +11,10 @@ import { useThemedStyles } from '../theme/useThemedStyles';
 
 type Tab = 'offen' | 'fertig';
 type BoardStyles = ReturnType<typeof createStyles>;
+
+// Zeigt sich, wenn im "Offen"-Tab (Küche oder Bar) gerade nichts zu tun ist — links
+// der Spruch, rechts das Bild, siehe EmptyBoardBanner unten.
+const IMPATIENT_HONGBIN = require('../../assets/impatient_hongbin.png');
 
 // Eigener Key pro Gerät (Küche/Bar), falls dasselbe Tablet doch mal die Rolle wechselt —
 // die Stumm-Einstellung der Küche soll dann nicht ungefragt auch für die Bar gelten.
@@ -77,14 +82,14 @@ export default function DeviceTicketBoard({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const cardBackground = useMemo(() => cardBackgroundFor(colors), [colors]);
-  const { orders, loading, error, setItemStatus } = useDeviceOrders(targetDevice);
+  const { orders, loading, error, setItemStatus, setItemsStatus } = useDeviceOrders(targetDevice);
   const [tab, setTab] = useState<Tab>('offen');
   // Standardmäßig an — Küche/Bar können den Ton per Glocken-Button stumm schalten
   // (z.B. während einer Pause). Wird in AsyncStorage gemerkt, damit die Einstellung
   // erhalten bleibt, wenn die App in den Hintergrund/Task-Wechsel geht oder neu
   // startet, statt bei jedem Neu-Mounten wieder auf "an" zurückzuspringen.
   const [soundEnabled, setSoundEnabled] = useState(true);
-  useNewOrderChime(orders, soundEnabled);
+  useNewOrderChime(orders, soundEnabled, targetDevice === 'kitchen');
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +107,17 @@ export default function DeviceTicketBoard({
       AsyncStorage.setItem(soundEnabledStorageKey(targetDevice), next ? '1' : '0');
       return next;
     });
+  }
+
+  // Hakt alle noch offenen Positionen einer Karte auf einmal ab (X-Button oder
+  // Wisch-Geste, siehe TicketList) statt jedes Item einzeln antippen zu müssen — z.B.
+  // wenn die Bedienung mündlich Bescheid gibt, dass ein Tisch storniert wurde, oder die
+  // Küche eine ganze Bestellung im selben Moment fertigstellt. Bereits fertige Items in
+  // der Karte werden nicht angefasst, damit ihr done_at-Zeitstempel nicht überschrieben
+  // wird.
+  function completeOrder(order: GroupedOrder) {
+    const openItemIds = order.items.filter((item) => item.status === 'offen').map((item) => item.id);
+    setItemsStatus(openItemIds, 'fertig');
   }
 
   const { open, done } = useMemo(() => {
@@ -167,7 +183,9 @@ export default function DeviceTicketBoard({
         </TouchableOpacity>
       </View>
 
-      {showStationColumns ? (
+      {tab === 'offen' && open.length === 0 ? (
+        <EmptyBoardBanner large={large} styles={styles} />
+      ) : showStationColumns ? (
         <View style={styles.stationRow}>
           <View style={styles.stationColumn}>
             <StationHeader title="Vorspeise" openCount={countOpenItems(vorspeiseOrders)} large={large} styles={styles} />
@@ -177,6 +195,8 @@ export default function DeviceTicketBoard({
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
+              onCompleteOrder={completeOrder}
+              allowComplete
               emptyText="Keine offenen Vorspeisen."
             />
           </View>
@@ -194,6 +214,8 @@ export default function DeviceTicketBoard({
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
+              onCompleteOrder={completeOrder}
+              allowComplete
               emptyText="Keine offenen Hauptspeisen."
             />
           </View>
@@ -205,9 +227,31 @@ export default function DeviceTicketBoard({
           styles={styles}
           cardBackground={cardBackground}
           onToggleItem={setItemStatus}
+          onCompleteOrder={completeOrder}
+          allowComplete={tab === 'offen'}
           emptyText={tab === 'offen' ? 'Keine offenen Bestellungen.' : 'Noch keine erledigten Bestellungen.'}
         />
       )}
+    </View>
+  );
+}
+
+// Ersetzt die Ticket-Liste komplett, solange im "Offen"-Tab nichts ansteht (statt nur
+// eines schlichten ListEmptyComponent-Texts wie sonst) — ein kleiner Spaß für die Küche/
+// Bar in ruhigen Momenten. Bei der Küche mit ihrer Zwei-Spalten-Ansicht gilt das für beide
+// Spalten gleichzeitig (dieselbe `open`-Liste speist beide), deshalb einmal über dem
+// ganzen Board statt einmal pro Spalte.
+function EmptyBoardBanner({ large, styles }: { large: boolean; styles: BoardStyles }) {
+  return (
+    <View style={styles.emptyBanner}>
+      <Text style={[styles.emptyBannerText, large && styles.emptyBannerTextLarge]}>
+        啊呀怎么没事情干啊😔😔😔
+      </Text>
+      <Image
+        source={IMPATIENT_HONGBIN}
+        style={[styles.emptyBannerImage, large && styles.emptyBannerImageLarge]}
+        resizeMode="contain"
+      />
     </View>
   );
 }
@@ -240,6 +284,8 @@ function TicketList({
   styles,
   cardBackground,
   onToggleItem,
+  onCompleteOrder,
+  allowComplete = false,
   emptyText,
 }: {
   orders: GroupedOrder[];
@@ -247,6 +293,8 @@ function TicketList({
   styles: BoardStyles;
   cardBackground: Record<OrderProgress, object>;
   onToggleItem: (itemId: string, status: OrderItemStatus) => void;
+  onCompleteOrder?: (order: GroupedOrder) => void;
+  allowComplete?: boolean;
   emptyText: string;
 }) {
   return (
@@ -254,13 +302,25 @@ function TicketList({
       data={orders}
       keyExtractor={(order) => order.orderId}
       contentContainerStyle={[styles.listContent, large && styles.listContentLarge]}
-      renderItem={({ item: order }) => (
-        <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
-          <View style={styles.cardHeader}>
-            <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>Tisch {order.table.number}</Text>
-            <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>{formatTime(order.createdAt)}</Text>
-          </View>
-          {order.items.map((item) => (
+      renderItem={({ item: order }) => {
+        const card = (
+          <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
+            <View style={styles.cardHeader}>
+              <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>Tisch {order.table.number}</Text>
+              <View style={styles.cardHeaderRight}>
+                <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>{formatTime(order.createdAt)}</Text>
+                {allowComplete && (
+                  <TouchableOpacity
+                    onPress={() => onCompleteOrder?.(order)}
+                    style={[styles.cardCloseButton, large && styles.cardCloseButtonLarge]}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Text style={[styles.cardCloseButtonText, large && styles.cardCloseButtonTextLarge]}>×</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+            {order.items.map((item) => (
             <TouchableOpacity
               key={item.id}
               style={[styles.itemRow, large && styles.itemRowLarge]}
@@ -307,9 +367,38 @@ function TicketList({
                 </Text>
               )}
             </TouchableOpacity>
-          ))}
-        </View>
-      )}
+            ))}
+          </View>
+        );
+
+        if (!allowComplete) return card;
+
+        // Wisch-Geste als zweiter Weg (neben dem X-Button oben), eine ganze Karte auf
+        // einmal abzuhaken — z.B. wenn eine Hand gerade an Töpfen/Tellern beschäftigt
+        // ist und ein Wisch schneller geht als gezielt den kleinen X-Button zu treffen.
+        // renderRightActions zeigt das grüne Aktionsfeld, während nach links gewischt
+        // wird (der Inhalt rutscht dabei nach links, das Feld erscheint von rechts).
+        // onSwipeableOpen löst direkt beim vollständigen Öffnen aus, ohne dass zusätzlich
+        // noch auf das Aktionsfeld getippt werden müsste — ein durchgezogener Wisch reicht.
+        return (
+          <Swipeable
+            renderRightActions={() => (
+              <View style={[styles.swipeCompleteAction, large && styles.swipeCompleteActionLarge]}>
+                <Text style={[styles.swipeCompleteActionText, large && styles.swipeCompleteActionTextLarge]}>
+                  ✓ Fertig
+                </Text>
+              </View>
+            )}
+            onSwipeableOpen={(direction) => {
+              if (direction === 'right') onCompleteOrder?.(order);
+            }}
+            overshootRight={false}
+            rightThreshold={40}
+          >
+            {card}
+          </Swipeable>
+        );
+      }}
       ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
     />
   );
@@ -335,6 +424,32 @@ const createStyles = (colors: ThemeColors) =>
     bellButtonLarge: { paddingHorizontal: 18, paddingVertical: 14 },
     bellButtonText: { fontSize: 22 },
     bellButtonTextLarge: { fontSize: 32 },
+    // "Nichts zu tun"-Banner statt Ticket-Liste, siehe EmptyBoardBanner — Text links,
+    // Bild rechts. Bild-Breite fix, Höhe über aspectRatio (Originalbild ist 1200×1600,
+    // also Hochformat 3:4) statt fixer Höhe, damit es nicht verzerrt wird. overflow:
+    // 'hidden' als Sicherheitsnetz — Views clippen in RN standardmäßig NICHT, ein zu
+    // großes Bild würde sonst optisch (und für Touches!) über den Container hinaus in
+    // die Tableiste darüber hineinragen, wie bei Breite 660 auf der Küche geschehen
+    // (660 × 4/3 ≈ 880 hoch, mehr als der verfügbare Platz unter der Tableiste).
+    emptyBanner: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+      gap: 20,
+      overflow: 'hidden',
+    },
+    emptyBannerText: {
+      flex: 1,
+      fontSize: 54,
+      fontWeight: '600',
+      color: colors.textMuted,
+      textAlign: 'right',
+    },
+    emptyBannerTextLarge: { fontSize: 78 },
+    emptyBannerImage: { width: 420, aspectRatio: 3 / 4 },
+    emptyBannerImageLarge: { width: 280 },
     // Zwei-Spalten-Ansicht für die Küche (Vorspeise | Hauptspeise+Barbecue), jede
     // Spalte unabhängig scrollbar, damit eine große Hauptspeise-Bestellung nicht mehr
     // die Vorspeisen einer neuen Bestellung von der Küche wegscrollt.
@@ -362,15 +477,46 @@ const createStyles = (colors: ThemeColors) =>
     cardLarge: { padding: 20, borderRadius: 16 },
     cardHeader: {
       flexDirection: 'row',
-      alignItems: 'baseline',
+      alignItems: 'center',
       justifyContent: 'space-between',
       marginBottom: 8,
       gap: 8,
     },
     tableLabel: { fontSize: 18, fontWeight: '700', color: colors.text },
     tableLabelLarge: { fontSize: 28 },
+    cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     timeLabel: { fontSize: 13, color: colors.textMuted, fontWeight: '600' },
     timeLabelLarge: { fontSize: 18 },
+    // X-Button zum Abhaken der ganzen Karte auf einmal (siehe TicketList) — bewusst als
+    // dezenter Kreis statt eines auffälligen roten Buttons, damit er im hektischen
+    // Küchenbetrieb nicht mit einem Fehler-/Löschen-Signal verwechselt wird; das eigentliche
+    // "Fertig"-Signal kommt über die Kartenfarbe (siehe cardBackgroundFor), sobald alle
+    // Items abgehakt sind.
+    cardCloseButton: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
+    },
+    cardCloseButtonLarge: { width: 38, height: 38, borderRadius: 19 },
+    cardCloseButtonText: { fontSize: 16, fontWeight: '700', color: colors.textSecondary, lineHeight: 18 },
+    cardCloseButtonTextLarge: { fontSize: 22, lineHeight: 24 },
+    // Grünes Aktionsfeld, das beim Wischen einer Karte nach links von rechts hereinrutscht
+    // (siehe renderRightActions in TicketList) — dieselbe Breite muss nicht exakt zum
+    // rightThreshold der Swipeable passen, das Feld ist nur die visuelle Rückmeldung.
+    swipeCompleteAction: {
+      width: 96,
+      marginBottom: 12,
+      borderRadius: 12,
+      backgroundColor: '#16a34a',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    swipeCompleteActionLarge: { width: 130, borderRadius: 16 },
+    swipeCompleteActionText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+    swipeCompleteActionTextLarge: { fontSize: 18 },
     itemRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border },
     itemRowLarge: { paddingVertical: 14 },
     itemHanzi: { fontSize: 18, fontWeight: '600', color: colors.text },

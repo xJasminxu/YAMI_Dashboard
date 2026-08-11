@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ActivityIndicator, FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import { supabase } from '../../lib/supabase';
@@ -45,6 +46,12 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
+  // Position, die per X-Button/Wisch-Geste zum Entfernen vorgemerkt ist (siehe unten) —
+  // anders als "Bezahlt" (rein lokaler UI-Zustand) ist das Entfernen ein echtes Delete
+  // auf order_items und damit unwiderruflich, deshalb erst nach Bestätigung im Modal.
+  const [removeItem, setRemoveItem] = useState<DeviceOrderItem | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const tableOrders = useMemo(
     () => [...kitchen.orders, ...bar.orders].filter((order) => order.table.number === tableNumber),
@@ -85,6 +92,43 @@ export default function TableBillingScreen({ route, navigation }: Props) {
 
     setCloseConfirmOpen(false);
     navigation.goBack();
+  }
+
+  // X-Button oder Wisch-Geste (siehe FlatList unten) merken nur die Position vor —
+  // öffnet das Bestätigungs-Modal, statt sofort zu löschen. Anders als das Abhaken in
+  // Küche/Bar (dort jederzeit rückgängig per erneutem Antippen) ist ein gelöschtes
+  // order_item unwiderruflich weg, deshalb hier ein expliziter Bestätigungsschritt statt
+  // eines sofort auslösenden Wischs.
+  function requestRemoveItem(item: DeviceOrderItem) {
+    setRemoveError(null);
+    setRemoveItem(item);
+  }
+
+  function cancelRemoveItem() {
+    setRemoveItem(null);
+    setRemoveError(null);
+  }
+
+  // Löscht die Position wirklich aus order_items — für falsch bestellte Positionen oder
+  // Einladungen aufs Haus. Wirkt sich auch auf Küche/Bar aus (order_items ist dieselbe
+  // Tabelle, siehe useDeviceOrders-Realtime-Subscription): eine noch offene Position
+  // verschwindet dort ebenfalls sofort aus dem Ticket.
+  async function confirmRemoveItem() {
+    if (!removeItem) return;
+
+    setRemoving(true);
+    setRemoveError(null);
+
+    const { error } = await supabase.from('order_items').delete().eq('id', removeItem.id);
+
+    setRemoving(false);
+
+    if (error) {
+      setRemoveError(error.message);
+      return;
+    }
+
+    setRemoveItem(null);
   }
 
   function toggle(id: string) {
@@ -192,7 +236,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           const paid = paidIds.has(item.id);
           const total = itemTotal(item);
           const isDone = item.status === 'fertig';
-          return (
+          const row = (
             <TouchableOpacity
               style={[styles.itemRow, selected && styles.itemRowSelected, paid && styles.itemRowPaid]}
               onPress={() => handleItemPress(item.id)}
@@ -224,7 +268,36 @@ export default function TableBillingScreen({ route, navigation }: Props) {
                 {item.note && <Text style={[styles.itemNote, paid && styles.itemDone]}>Notiz: {item.note}</Text>}
               </View>
               <Text style={[styles.itemPrice, paid && styles.itemDone]}>{total !== null ? formatPrice(total) : '–'}</Text>
+              <TouchableOpacity
+                onPress={() => requestRemoveItem(item)}
+                style={styles.itemRemoveButton}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Text style={styles.itemRemoveButtonText}>×</Text>
+              </TouchableOpacity>
             </TouchableOpacity>
+          );
+
+          // Wisch-Geste als zweiter Weg (neben dem X-Button oben), eine falsch bestellte
+          // oder aufs Haus gehende Position loszuwerden — siehe DeviceTicketBoard für
+          // dieselbe Geste beim Abhaken ganzer Bestellungen. Anders als dort öffnet das
+          // Swipe hier nur die Bestätigung (statt sofort zu löschen), weil ein gelöschtes
+          // order_item — anders als ein Fertig/Offen-Toggle — nicht rückgängig zu machen ist.
+          return (
+            <Swipeable
+              renderRightActions={() => (
+                <TouchableOpacity style={styles.swipeRemoveAction} onPress={() => requestRemoveItem(item)}>
+                  <Text style={styles.swipeRemoveActionText}>🗑 Entfernen</Text>
+                </TouchableOpacity>
+              )}
+              onSwipeableOpen={(direction) => {
+                if (direction === 'right') requestRemoveItem(item);
+              }}
+              overshootRight={false}
+              rightThreshold={40}
+            >
+              {row}
+            </Swipeable>
           );
         }}
         ListEmptyComponent={<Text style={styles.emptyText}>Keine Positionen für diesen Tisch.</Text>}
@@ -285,6 +358,31 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               onPress={() => setCloseConfirmOpen(false)}
               disabled={closing}
             >
+              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={removeItem !== null} transparent animationType="fade" onRequestClose={cancelRemoveItem}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Position entfernen?</Text>
+            <Text style={styles.modalBody}>
+              {removeItem?.menu_item.name_hanzi} ({removeItem?.menu_item.name_de}
+              {removeItem?.variant_de ? ` · ${removeItem.variant_de}` : ''}) wird unwiderruflich aus der Bestellung
+              gelöscht — auch aus Küche/Bar, falls dort noch offen. Für falsch bestellte Positionen oder Einladungen
+              aufs Haus.
+            </Text>
+            {removeError && <Text style={styles.errorText}>{removeError}</Text>}
+            <TouchableOpacity
+              style={[styles.confirmButton, removing && styles.confirmButtonDisabled]}
+              onPress={confirmRemoveItem}
+              disabled={removing}
+            >
+              {removing ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmButtonText}>Ja, entfernen</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelRemoveItem} disabled={removing}>
               <Text style={styles.cancelButtonText}>Abbrechen</Text>
             </TouchableOpacity>
           </View>
@@ -373,6 +471,31 @@ const createStyles = (colors: ThemeColors) =>
     itemNote: { fontSize: 12, color: colors.warning, marginTop: 2, fontWeight: '700' },
     itemDone: { color: colors.textFaint },
     itemPrice: { fontSize: 15, fontWeight: '700', color: colors.text },
+    // X-Button zum Entfernen einer einzelnen Position (siehe requestRemoveItem) — bewusst
+    // dezent statt eines auffälligen roten Buttons, das eigentliche "das ist eine
+    // Löschaktion"-Signal kommt über das Bestätigungs-Modal.
+    itemRemoveButton: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: 8,
+      backgroundColor: colors.surfaceAlt,
+    },
+    itemRemoveButtonText: { fontSize: 16, fontWeight: '700', color: colors.textSecondary, lineHeight: 18 },
+    // Rotes Aktionsfeld, das beim Wischen einer Position nach links von rechts
+    // hereinrutscht (siehe renderRightActions oben) — marginBottom identisch zu
+    // itemRow, damit das Feld nicht in den Abstand zur nächsten Position hineinragt.
+    swipeRemoveAction: {
+      width: 110,
+      marginBottom: 8,
+      borderRadius: 10,
+      backgroundColor: colors.danger,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    swipeRemoveActionText: { color: '#fff', fontWeight: '700', fontSize: 13 },
     emptyText: { textAlign: 'center', color: colors.textFaint, marginTop: 32 },
     footer: {
       borderTopWidth: 1,

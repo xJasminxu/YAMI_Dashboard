@@ -99,5 +99,16 @@ export function useDeviceOrders(targetDevice: TargetDevice) {
       .eq('id', itemId);
   }, []);
 
-  return { orders, loading, error, setItemStatus, refetch: fetchOrders };
+  // Für "ganze Bestellung abhaken" (X-Button/Swipe auf der Ticket-Karte, siehe
+  // DeviceTicketBoard) — ein Update-Call für alle betroffenen Zeilen statt einer
+  // Schleife aus setItemStatus-Aufrufen pro Item.
+  const setItemsStatus = useCallback(async (itemIds: string[], status: 'offen' | 'fertig') => {
+    if (itemIds.length === 0) return;
+    await supabase
+      .from('order_items')
+      .update({ status, done_at: status === 'fertig' ? new Date().toISOString() : null })
+      .in('id', itemIds);
+  }, []);
+
+  return { orders, loading, error, setItemStatus, setItemsStatus, refetch: fetchOrders };
 }
