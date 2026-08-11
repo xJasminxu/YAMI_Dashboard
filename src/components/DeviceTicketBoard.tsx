@@ -55,6 +55,12 @@ function itemsForStations(orders: GroupedOrder[], stations: KitchenStation[]): G
     .filter((order) => order.items.length > 0);
 }
 
+// Zeitpunkt, an dem die letzte Position der Bestellung fertig markiert wurde — bestimmt
+// die Reihenfolge der "Vergangene Bestellungen"-Liste (neueste zuerst).
+function latestDoneAt(order: GroupedOrder): number {
+  return order.items.reduce((latest, item) => Math.max(latest, item.done_at ? new Date(item.done_at).getTime() : 0), 0);
+}
+
 function countOpenItems(orders: GroupedOrder[]): number {
   return orders.reduce((sum, order) => sum + order.items.filter((item) => item.status === 'offen').length, 0);
 }
@@ -100,7 +106,9 @@ export default function DeviceTicketBoard({
 
   const { open, done } = useMemo(() => {
     const open = orders.filter((order) => order.items.some((item) => item.status === 'offen'));
-    const done = orders.filter((order) => order.items.every((item) => item.status === 'fertig'));
+    const done = orders
+      .filter((order) => order.items.every((item) => item.status === 'fertig'))
+      .sort((a, b) => latestDoneAt(b) - latestDoneAt(a));
     return { open, done };
   }, [orders]);
 
