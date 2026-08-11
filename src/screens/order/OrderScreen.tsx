@@ -439,6 +439,10 @@ export default function OrderScreen() {
           <FlatList
             data={activeCategory.items}
             keyExtractor={(item) => item.id}
+            // Die schwebende "Zur Bestellung"-Pille (CartBar) liegt absolut positioniert
+            // über der Liste — ohne diesen Puffer verdeckt sie die letzten Einträge einer
+            // langen Kategorie (z.B. "Alkoholfreie Getränke").
+            contentContainerStyle={{ paddingBottom: cartBarBottomOffset + 80 }}
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.itemRow} onPress={() => handleItemPress(item)}>
                 {item.item_code && (

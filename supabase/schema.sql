@@ -112,6 +112,18 @@ create table if not exists orders (
 
 create index if not exists orders_table_id_idx on orders(table_id);
 
+-- Migration: closed_at-Spalte (nachträglich hinzugefügt). null = Bestellung läuft noch
+-- (zählt für Küche/Bar/Status/Tischübersicht als "aktueller Tisch"). Gesetzt, sobald die
+-- Bedienung in TableBillingScreen.tsx "Tisch abschließen" antippt — der Tisch verschwindet
+-- dadurch aus Küche/Bar/Status und ist sofort wieder frei für neue Gäste (neue orders-Zeile
+-- für dieselbe Tischnummer bekommt wieder closed_at=null), OHNE dass die Bestellung
+-- gelöscht wird. TableOverviewScreen.tsx zeigt geschlossene Bestellungen weiterhin unter
+-- "Vergangene Tische" an, damit man sie bei Rückfragen noch nachschlagen kann. Ein
+-- echtes Löschen (delete auf orders) passiert nur noch beim Tagesabschluss
+-- (RoleSelectScreen.tsx), unabhängig von closed_at.
+alter table orders add column if not exists closed_at timestamptz;
+create index if not exists orders_closed_at_idx on orders(closed_at);
+
 -- ---------------------------------------------------------------------------
 -- order_items
 -- Einzelne Position innerhalb einer Bestellung. status wird von Küche/Bar
@@ -201,6 +213,8 @@ drop policy if exists "allow all read orders" on orders;
 create policy "allow all read orders" on orders for select using (true);
 drop policy if exists "allow all write orders" on orders;
 create policy "allow all write orders" on orders for insert with check (true);
+drop policy if exists "allow all update orders" on orders;
+create policy "allow all update orders" on orders for update using (true); -- für "Tisch abschließen" (closed_at)
 drop policy if exists "allow all delete orders" on orders;
 create policy "allow all delete orders" on orders for delete using (true); -- für Tagesabschluss
 

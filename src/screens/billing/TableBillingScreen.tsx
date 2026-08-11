@@ -11,6 +11,11 @@ import { useThemedStyles } from '../../theme/useThemedStyles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TableBilling'>;
 
+// Zahlungsart einer bezahlt markierten Position — nur zur Orientierung, welcher Anteil
+// der Rechnung später am Kartenlesegerät bzw. in bar an der Kasse abgeglichen werden
+// muss (die Kasse selbst druckt weiterhin die verbindliche Rechnung, siehe unten).
+type PaymentMethod = 'karte' | 'bargeld';
+
 function formatPrice(amount: number) {
   return `${amount.toFixed(2).replace('.', ',')} €`;
 }
@@ -33,16 +38,23 @@ function itemTotal(item: DeviceOrderItem): number | null {
 // das bestehende Kassensystem, hier wird nichts gebucht oder gespeichert.
 export default function TableBillingScreen({ route, navigation }: Props) {
   const styles = useThemedStyles(createStyles);
-  const { tableNumber } = route.params;
-  const kitchen = useDeviceOrders('kitchen');
-  const bar = useDeviceOrders('bar');
+  const { tableNumber, closed: showClosed = false } = route.params;
+  // includeClosed:true, damit derselbe Hook sowohl den aktuellen Tisch (closedAt===null)
+  // als auch einen aus "Vergangene Tische" aufgerufenen, bereits geschlossenen Tisch
+  // (closedAt gesetzt) laden kann — welcher von beiden gemeint ist, entscheidet
+  // showClosed unten beim Filtern von tableOrders.
+  const kitchen = useDeviceOrders('kitchen', { includeClosed: true });
+  const bar = useDeviceOrders('bar', { includeClosed: true });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // Als bezahlt markierte Positionen — rein lokaler UI-Zustand für diesen
-  // Bildschirmbesuch (wie die Auswahl selbst), nichts wird gebucht/gespeichert.
+  // Als bezahlt markierte Positionen + ihre Zahlungsart — rein lokaler UI-Zustand für
+  // diesen Bildschirmbesuch (wie die Auswahl selbst), nichts wird gebucht/gespeichert.
   // Grund für einen eigenen Screen-Reset statt Persistierung: sobald der Tisch
   // fertig abgerechnet ist, wird sowieso der Tagesabschluss gemacht bzw. die
   // Bestellung läuft aus den offenen Ansichten raus.
-  const [paidIds, setPaidIds] = useState<Set<string>>(new Set());
+  const [paidMethods, setPaidMethods] = useState<Map<string, PaymentMethod>>(new Map());
+  // Öffnet sich beim Antippen von "Bezahlt", um vor dem Markieren die Zahlungsart der
+  // Auswahl abzufragen (siehe requestMarkSelectedAsPaid/confirmPayment).
+  const [paymentPromptOpen, setPaymentPromptOpen] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -54,11 +66,14 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   const tableOrders = useMemo(
-    () => [...kitchen.orders, ...bar.orders].filter((order) => order.table.number === tableNumber),
-    [kitchen.orders, bar.orders, tableNumber]
+    () =>
+      [...kitchen.orders, ...bar.orders].filter(
+        (order) => order.table.number === tableNumber && (order.closedAt !== null) === showClosed
+      ),
+    [kitchen.orders, bar.orders, tableNumber, showClosed]
   );
   // Für "Tisch abschließen" gebraucht — anders als die restliche Seite ist das
-  // ein echter Schreibzugriff (delete auf orders, cascade auf order_items).
+  // ein echter Schreibzugriff (update auf orders.closed_at).
   const tableId = tableOrders[0]?.table.id ?? null;
 
   const items = useMemo(
@@ -66,12 +81,13 @@ export default function TableBillingScreen({ route, navigation }: Props) {
     [tableOrders]
   );
 
-  // Löscht alle Bestellungen dieses Tisches (order_items hängt per "on delete
-  // cascade" dran) — anders als "Bezahlt" oben ist das keine reine Anzeige,
-  // sondern schließt den Tisch wirklich ab: er verschwindet aus Küche/Bar/
-  // Status/Tischübersicht und ist wieder frei für neue Gäste. Die verbindliche
-  // Rechnung läuft weiterhin über die Kasse — das hier ist nur das Aufräumen
-  // auf Seite der App.
+  // Markiert alle noch offenen (nicht bereits geschlossenen) Bestellungen dieses Tisches
+  // als abgeschlossen (orders.closed_at) statt sie zu löschen — anders als "Bezahlt" oben
+  // ist das keine reine Anzeige, sondern schließt den Tisch wirklich ab: er verschwindet
+  // aus Küche/Bar/Status/der aktuellen Tischübersicht und ist wieder frei für neue Gäste,
+  // bleibt aber unter "Vergangene Tische" nachschlagbar. Die verbindliche Rechnung läuft
+  // weiterhin über die Kasse — das hier räumt nur die App-Ansicht auf. Echt gelöscht wird
+  // eine Bestellung erst beim Tagesabschluss (RoleSelectScreen.tsx).
   async function handleCloseTable() {
     if (!tableId) {
       setCloseConfirmOpen(false);
@@ -81,7 +97,11 @@ export default function TableBillingScreen({ route, navigation }: Props) {
     setClosing(true);
     setCloseError(null);
 
-    const { error } = await supabase.from('orders').delete().eq('table_id', tableId);
+    const { error } = await supabase
+      .from('orders')
+      .update({ closed_at: new Date().toISOString() })
+      .eq('table_id', tableId)
+      .is('closed_at', null);
 
     setClosing(false);
 
@@ -144,9 +164,9 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   // antippen macht die Bezahlung rückgängig (z.B. bei Vertippern), sonst wird
   // die normale Auswahl umgeschaltet.
   function handleItemPress(id: string) {
-    if (paidIds.has(id)) {
-      setPaidIds((prev) => {
-        const next = new Set(prev);
+    if (paidMethods.has(id)) {
+      setPaidMethods((prev) => {
+        const next = new Map(prev);
         next.delete(id);
         return next;
       });
@@ -155,14 +175,23 @@ export default function TableBillingScreen({ route, navigation }: Props) {
     toggle(id);
   }
 
-  function markSelectedAsPaid() {
+  function requestMarkSelectedAsPaid() {
     if (selectedIds.size === 0) return;
-    setPaidIds((prev) => new Set([...prev, ...selectedIds]));
+    setPaymentPromptOpen(true);
+  }
+
+  function confirmPayment(method: PaymentMethod) {
+    setPaidMethods((prev) => {
+      const next = new Map(prev);
+      for (const id of selectedIds) next.set(id, method);
+      return next;
+    });
     setSelectedIds(new Set());
+    setPaymentPromptOpen(false);
   }
 
   function selectAll() {
-    setSelectedIds(new Set(items.filter((item) => !paidIds.has(item.id)).map((item) => item.id)));
+    setSelectedIds(new Set(items.filter((item) => !paidMethods.has(item.id)).map((item) => item.id)));
   }
 
   function selectNone() {
@@ -188,7 +217,13 @@ export default function TableBillingScreen({ route, navigation }: Props) {
 
   const grandTotal = items.reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
   const paidTotal = items
-    .filter((item) => paidIds.has(item.id))
+    .filter((item) => paidMethods.has(item.id))
+    .reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
+  const cardTotal = items
+    .filter((item) => paidMethods.get(item.id) === 'karte')
+    .reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
+  const cashTotal = items
+    .filter((item) => paidMethods.get(item.id) === 'bargeld')
     .reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
   const openTotal = grandTotal - paidTotal;
   const selectedTotal = items
@@ -199,12 +234,20 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Tisch {tableNumber}</Text>
+        <Text style={styles.title}>
+          Tisch {tableNumber}
+          {showClosed ? ' (abgeschlossen)' : ''}
+        </Text>
         <Text style={styles.grandTotal}>Gesamt: {formatPrice(grandTotal)}</Text>
       </View>
-      {paidIds.size > 0 && (
+      {paidMethods.size > 0 && (
         <View style={styles.paidSummaryRow}>
-          <Text style={styles.paidSummaryText}>Bezahlt: {formatPrice(paidTotal)}</Text>
+          <View>
+            <Text style={styles.paidSummaryText}>Bezahlt: {formatPrice(paidTotal)}</Text>
+            <Text style={styles.paidSummarySplit}>
+              Karte {formatPrice(cardTotal)} · Bargeld {formatPrice(cashTotal)}
+            </Text>
+          </View>
           <Text style={styles.openSummaryText}>Noch offen: {formatPrice(openTotal)}</Text>
         </View>
       )}
@@ -219,7 +262,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
 
       <TouchableOpacity
         style={[styles.paidButton, selectedIds.size === 0 && styles.paidButtonDisabled]}
-        onPress={markSelectedAsPaid}
+        onPress={requestMarkSelectedAsPaid}
         disabled={selectedIds.size === 0}
       >
         <Text style={styles.paidButtonText}>
@@ -233,7 +276,8 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => {
           const selected = selectedIds.has(item.id);
-          const paid = paidIds.has(item.id);
+          const paidMethod = paidMethods.get(item.id) ?? null;
+          const paid = paidMethod !== null;
           const total = itemTotal(item);
           const isDone = item.status === 'fertig';
           const row = (
@@ -243,7 +287,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
             >
               {paid ? (
                 <View style={styles.paidBadge}>
-                  <Text style={styles.paidBadgeText}>✓</Text>
+                  <Text style={styles.paidBadgeText}>{paidMethod === 'karte' ? 'K' : 'B'}</Text>
                 </View>
               ) : (
                 <View style={[styles.checkbox, selected && styles.checkboxChecked]}>
@@ -307,7 +351,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         {hasUnpriced && <Text style={styles.footerNote}>Enthält Positionen ohne hinterlegten Preis.</Text>}
         <View style={styles.footerRow}>
           <Text style={styles.footerLabel}>
-            Noch offen ({items.length - paidIds.size}/{items.length})
+            Noch offen ({items.length - paidMethods.size}/{items.length})
           </Text>
           <Text style={styles.footerValue}>{formatPrice(openTotal)}</Text>
         </View>
@@ -316,14 +360,36 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           verbindliche Rechnung druckt weiterhin die Kasse.
         </Text>
 
-        <TouchableOpacity
-          style={[styles.closeTableButton, items.length === 0 && styles.closeTableButtonDisabled]}
-          onPress={() => setCloseConfirmOpen(true)}
-          disabled={items.length === 0}
-        >
-          <Text style={styles.closeTableButtonText}>Tisch abschließen</Text>
-        </TouchableOpacity>
+        {!showClosed && (
+          <TouchableOpacity
+            style={[styles.closeTableButton, items.length === 0 && styles.closeTableButtonDisabled]}
+            onPress={() => setCloseConfirmOpen(true)}
+            disabled={items.length === 0}
+          >
+            <Text style={styles.closeTableButtonText}>Tisch abschließen</Text>
+          </TouchableOpacity>
+        )}
       </View>
+
+      <Modal visible={paymentPromptOpen} transparent animationType="fade" onRequestClose={() => setPaymentPromptOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Zahlungsart</Text>
+            <Text style={styles.modalBody}>
+              {selectedIds.size} Position(en) · {formatPrice(selectedTotal)}
+            </Text>
+            <TouchableOpacity style={styles.paymentMethodButton} onPress={() => confirmPayment('karte')}>
+              <Text style={styles.paymentMethodButtonText}>Karte</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.paymentMethodButton} onPress={() => confirmPayment('bargeld')}>
+              <Text style={styles.paymentMethodButtonText}>Bargeld</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelButton} onPress={() => setPaymentPromptOpen(false)}>
+              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={closeConfirmOpen}
@@ -335,10 +401,11 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Tisch {tableNumber} abschließen?</Text>
             <Text style={styles.modalBody}>
-              Löscht alle Bestellungen dieses Tisches unwiderruflich (Küche, Bar, Status, Tischübersicht). Der
-              Tisch ist danach wieder frei für neue Gäste. Speisekarte und übrige Tische bleiben unangetastet.
+              Nimmt diesen Tisch aus Küche, Bar, Status und der aktuellen Tischübersicht raus und macht ihn wieder
+              frei für neue Gäste. Die Bestellung wird dabei nicht gelöscht, sondern bleibt unter "Vergangene
+              Tische" nachschlagbar, bis der Tagesabschluss gemacht wird.
               {openTotal > 0
-                ? ` Achtung: noch ${items.length - paidIds.size} Position(en) im Wert von ${formatPrice(openTotal)} sind nicht als bezahlt markiert.`
+                ? ` Achtung: noch ${items.length - paidMethods.size} Position(en) im Wert von ${formatPrice(openTotal)} sind nicht als bezahlt markiert.`
                 : ''}
             </Text>
             {closeError && <Text style={styles.errorText}>{closeError}</Text>}
@@ -409,10 +476,12 @@ const createStyles = (colors: ThemeColors) =>
     paidSummaryRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
+      alignItems: 'flex-start',
       paddingHorizontal: 16,
       paddingTop: 8,
     },
     paidSummaryText: { fontSize: 13, fontWeight: '600', color: colors.success },
+    paidSummarySplit: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
     openSummaryText: { fontSize: 13, fontWeight: '600', color: colors.warning },
     selectRow: {
       flexDirection: 'row',
@@ -554,4 +623,12 @@ const createStyles = (colors: ThemeColors) =>
     confirmButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     cancelButton: { paddingVertical: 10, alignItems: 'center' },
     cancelButtonText: { fontSize: 15, color: colors.textMuted },
+    paymentMethodButton: {
+      backgroundColor: '#16a34a',
+      borderRadius: 10,
+      paddingVertical: 14,
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    paymentMethodButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   });

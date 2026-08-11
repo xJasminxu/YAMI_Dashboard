@@ -65,6 +65,12 @@ export interface Order {
   id: string;
   table_id: string;
   created_at: string;
+  // null = Bestellung läuft noch. Gesetzt beim "Tisch abschließen" in
+  // TableBillingScreen.tsx (siehe schema.sql) — der Tisch bleibt dabei erhalten,
+  // verschwindet aber aus Küche/Bar/Status/Tischübersicht und landet dort stattdessen
+  // unter "Vergangene Tische". Echt gelöscht wird eine Bestellung erst beim
+  // Tagesabschluss (RoleSelectScreen.tsx).
+  closed_at: string | null;
 }
 
 export interface OrderItem {

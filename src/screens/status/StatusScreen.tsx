@@ -25,6 +25,27 @@ interface RecentlyDoneEntry {
 
 const RECENTLY_DONE_LIMIT = 7;
 
+// Extrahiert die zuletzt fertiggestellten Items aus einem Satz Bestellungen (Küche
+// ODER Bar, siehe getrennte Aufrufe unten) — Küche und Bar werden getrennt gehalten
+// statt in einem gemeinsamen Streifen gemischt, da sonst z.B. eine ruhige Küchenphase
+// den Streifen komplett mit Getränken füllen und umgekehrt Essen aus dem Blick
+// verdrängen konnte.
+function buildRecentlyDone(orders: { table: { number: number }; items: DeviceOrderItem[] }[]): RecentlyDoneEntry[] {
+  const entries: RecentlyDoneEntry[] = [];
+
+  for (const order of orders) {
+    for (const item of order.items) {
+      if (item.status === 'fertig' && item.done_at) {
+        entries.push({ id: item.id, tableNumber: order.table.number, doneAt: item.done_at, item });
+      }
+    }
+  }
+
+  return entries
+    .sort((a, b) => new Date(b.doneAt).getTime() - new Date(a.doneAt).getTime())
+    .slice(0, RECENTLY_DONE_LIMIT);
+}
+
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 }
@@ -66,21 +87,8 @@ export default function StatusScreen({ navigation }: Props) {
       .sort((a, b) => a.tableNumber - b.tableNumber);
   }, [kitchen.orders, bar.orders]);
 
-  const recentlyDone = useMemo(() => {
-    const entries: RecentlyDoneEntry[] = [];
-
-    for (const order of [...kitchen.orders, ...bar.orders]) {
-      for (const item of order.items) {
-        if (item.status === 'fertig' && item.done_at) {
-          entries.push({ id: item.id, tableNumber: order.table.number, doneAt: item.done_at, item });
-        }
-      }
-    }
-
-    return entries
-      .sort((a, b) => new Date(b.doneAt).getTime() - new Date(a.doneAt).getTime())
-      .slice(0, RECENTLY_DONE_LIMIT);
-  }, [kitchen.orders, bar.orders]);
+  const recentlyDoneKitchen = useMemo(() => buildRecentlyDone(kitchen.orders), [kitchen.orders]);
+  const recentlyDoneBar = useMemo(() => buildRecentlyDone(bar.orders), [bar.orders]);
 
   if (kitchen.loading || bar.loading) {
     return (
@@ -101,25 +109,8 @@ export default function StatusScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      {recentlyDone.length > 0 && (
-        <View style={styles.recentBar}>
-          <Text style={styles.recentBarTitle}>Zuletzt zubereitet</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.recentBarContent}
-          >
-            {recentlyDone.map((entry) => (
-              <View key={entry.id} style={styles.recentChip}>
-                <Text style={styles.recentChipDish}>{dishLabel(entry.item)}</Text>
-                <Text style={styles.recentChipMeta}>
-                  Tisch {entry.tableNumber} · {formatTime(entry.doneAt)}
-                </Text>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+      <RecentlyDoneStrip title="Zuletzt zubereitet (Küche)" entries={recentlyDoneKitchen} styles={styles} />
+      <RecentlyDoneStrip title="Zuletzt zubereitet (Bar)" entries={recentlyDoneBar} styles={styles} />
       <FlatList
         data={rows}
         keyExtractor={(row) => String(row.tableNumber)}
@@ -149,6 +140,36 @@ export default function StatusScreen({ navigation }: Props) {
     </View>
   );
 }
+
+function RecentlyDoneStrip({
+  title,
+  entries,
+  styles,
+}: {
+  title: string;
+  entries: RecentlyDoneEntry[];
+  styles: StatusStyles;
+}) {
+  if (entries.length === 0) return null;
+
+  return (
+    <View style={styles.recentBar}>
+      <Text style={styles.recentBarTitle}>{title}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentBarContent}>
+        {entries.map((entry) => (
+          <View key={entry.id} style={styles.recentChip}>
+            <Text style={styles.recentChipDish}>{dishLabel(entry.item)}</Text>
+            <Text style={styles.recentChipMeta}>
+              Tisch {entry.tableNumber} · {formatTime(entry.doneAt)}
+            </Text>
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+type StatusStyles = ReturnType<typeof createStyles>;
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
