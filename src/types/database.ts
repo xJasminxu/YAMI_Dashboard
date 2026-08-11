@@ -6,6 +6,9 @@ export type OrderItemStatus = 'offen' | 'fertig';
 // Nur bei target_device='kitchen' gesetzt — steuert die Zwei-Spalten-Ansicht auf dem
 // Küchen-Screen (siehe DeviceTicketBoard.tsx). Bei Bar-Kategorien immer null.
 export type KitchenStation = 'vorspeise' | 'hauptspeise' | 'barbecue';
+// Zahlungsart einer in TableBillingScreen.tsx als bezahlt markierten Position — nur zur
+// Orientierung, welcher Anteil später gegen Kartenleser/Kasse abgeglichen wird.
+export type PaymentMethod = 'karte' | 'bargeld';
 
 export interface Category {
   id: string;
@@ -87,4 +90,8 @@ export interface OrderItem {
   note: string | null;
   created_at: string;
   done_at: string | null;
+  // null = in der vorläufigen Abrechnung noch nicht als bezahlt markiert (siehe
+  // TableBillingScreen.tsx). In der DB statt nur lokalem Screen-Zustand, damit die
+  // Zahlungsart auch nach "Tisch abschließen" unter "Vergangene Tische" erhalten bleibt.
+  paid_method: PaymentMethod | null;
 }

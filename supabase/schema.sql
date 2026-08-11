@@ -156,6 +156,16 @@ create table if not exists order_items (
 create index if not exists order_items_order_id_idx on order_items(order_id);
 create index if not exists order_items_status_idx on order_items(status);
 
+-- Migration: paid_method-Spalte (nachträglich hinzugefügt). null = Position ist in der
+-- vorläufigen Abrechnung (TableBillingScreen.tsx) noch nicht als bezahlt markiert.
+-- Gesetzt, sobald die Bedienung eine Auswahl per "Bezahlt" mit Karte oder Bargeld
+-- markiert — bewusst in der DB statt nur als lokaler Screen-Zustand, damit die
+-- Zahlungsart auch nach "Tisch abschließen" beim späteren Nachschlagen unter
+-- "Vergangene Tische" noch sichtbar ist. Keine Buchung/Rechnung — dient weiterhin nur
+-- der Orientierung, welcher Anteil später gegen Kartenleser/Kasse abgeglichen wird.
+alter table order_items add column if not exists paid_method text
+  check (paid_method in ('karte', 'bargeld'));
+
 -- ---------------------------------------------------------------------------
 -- Realtime: order_items und orders für Live-Updates auf Küche/Bar aktivieren.
 -- (In Supabase: Database → Replication → Tabellen zur "supabase_realtime"

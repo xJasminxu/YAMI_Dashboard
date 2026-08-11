@@ -49,7 +49,7 @@ export function useDeviceOrders(targetDevice: TargetDevice, options: UseDeviceOr
       .from('order_items')
       .select(
         `
-        id, order_id, menu_item_id, status, variant_hanzi, variant_de, extras, unit_price, note, created_at, done_at,
+        id, order_id, menu_item_id, status, variant_hanzi, variant_de, extras, unit_price, note, created_at, done_at, paid_method,
         order:orders!inner(id, table_id, created_at, closed_at, table:tables(id, number)),
         menu_item:menu_items!inner(
           id, category_id, name_hanzi, name_de, item_code, active, price, created_at,

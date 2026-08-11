@@ -6,15 +6,11 @@ import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import { supabase } from '../../lib/supabase';
 import type { RootStackParamList } from '../../navigation/types';
+import type { PaymentMethod } from '../../types/database';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TableBilling'>;
-
-// Zahlungsart einer bezahlt markierten Position — nur zur Orientierung, welcher Anteil
-// der Rechnung später am Kartenlesegerät bzw. in bar an der Kasse abgeglichen werden
-// muss (die Kasse selbst druckt weiterhin die verbindliche Rechnung, siehe unten).
-type PaymentMethod = 'karte' | 'bargeld';
 
 function formatPrice(amount: number) {
   return `${amount.toFixed(2).replace('.', ',')} €`;
@@ -46,15 +42,14 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const kitchen = useDeviceOrders('kitchen', { includeClosed: true });
   const bar = useDeviceOrders('bar', { includeClosed: true });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // Als bezahlt markierte Positionen + ihre Zahlungsart — rein lokaler UI-Zustand für
-  // diesen Bildschirmbesuch (wie die Auswahl selbst), nichts wird gebucht/gespeichert.
-  // Grund für einen eigenen Screen-Reset statt Persistierung: sobald der Tisch
-  // fertig abgerechnet ist, wird sowieso der Tagesabschluss gemacht bzw. die
-  // Bestellung läuft aus den offenen Ansichten raus.
-  const [paidMethods, setPaidMethods] = useState<Map<string, PaymentMethod>>(new Map());
   // Öffnet sich beim Antippen von "Bezahlt", um vor dem Markieren die Zahlungsart der
-  // Auswahl abzufragen (siehe requestMarkSelectedAsPaid/confirmPayment).
+  // Auswahl abzufragen (siehe requestMarkSelectedAsPaid/confirmPayment). Die Markierung
+  // selbst landet auf order_items.paid_method (siehe schema.sql) statt in einem rein
+  // lokalen Screen-Zustand, damit sie auch nach "Tisch abschließen" beim Nachschlagen
+  // unter "Vergangene Tische" noch sichtbar ist.
   const [paymentPromptOpen, setPaymentPromptOpen] = useState(false);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -160,16 +155,13 @@ export default function TableBillingScreen({ route, navigation }: Props) {
     });
   }
 
-  // Bezahlte Positionen bleiben angetippt sichtbar, aber ausgegraut — nochmal
-  // antippen macht die Bezahlung rückgängig (z.B. bei Vertippern), sonst wird
-  // die normale Auswahl umgeschaltet.
-  function handleItemPress(id: string) {
-    if (paidMethods.has(id)) {
-      setPaidMethods((prev) => {
-        const next = new Map(prev);
-        next.delete(id);
-        return next;
-      });
+  // Bezahlte Positionen bleiben angetippt sichtbar, aber ausgegraut — nochmal antippen
+  // macht die Bezahlung rückgängig (z.B. bei Vertippern), sonst wird die normale Auswahl
+  // umgeschaltet. Fire-and-forget wie setItemStatus in useDeviceOrders (Realtime-
+  // Subscription auf order_items holt das Ergebnis ohnehin gleich nach).
+  function handleItemPress(id: string, paidMethod: PaymentMethod | null) {
+    if (paidMethod !== null) {
+      supabase.from('order_items').update({ paid_method: null }).eq('id', id);
       return;
     }
     toggle(id);
@@ -177,21 +169,32 @@ export default function TableBillingScreen({ route, navigation }: Props) {
 
   function requestMarkSelectedAsPaid() {
     if (selectedIds.size === 0) return;
+    setPaymentError(null);
     setPaymentPromptOpen(true);
   }
 
-  function confirmPayment(method: PaymentMethod) {
-    setPaidMethods((prev) => {
-      const next = new Map(prev);
-      for (const id of selectedIds) next.set(id, method);
-      return next;
-    });
+  async function confirmPayment(method: PaymentMethod) {
+    setSavingPayment(true);
+    setPaymentError(null);
+
+    const { error } = await supabase
+      .from('order_items')
+      .update({ paid_method: method })
+      .in('id', Array.from(selectedIds));
+
+    setSavingPayment(false);
+
+    if (error) {
+      setPaymentError(error.message);
+      return;
+    }
+
     setSelectedIds(new Set());
     setPaymentPromptOpen(false);
   }
 
   function selectAll() {
-    setSelectedIds(new Set(items.filter((item) => !paidMethods.has(item.id)).map((item) => item.id)));
+    setSelectedIds(new Set(items.filter((item) => item.paid_method === null).map((item) => item.id)));
   }
 
   function selectNone() {
@@ -216,14 +219,13 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   }
 
   const grandTotal = items.reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
-  const paidTotal = items
-    .filter((item) => paidMethods.has(item.id))
-    .reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
+  const paidItems = items.filter((item) => item.paid_method !== null);
+  const paidTotal = paidItems.reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
   const cardTotal = items
-    .filter((item) => paidMethods.get(item.id) === 'karte')
+    .filter((item) => item.paid_method === 'karte')
     .reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
   const cashTotal = items
-    .filter((item) => paidMethods.get(item.id) === 'bargeld')
+    .filter((item) => item.paid_method === 'bargeld')
     .reduce((sum, item) => sum + (itemTotal(item) ?? 0), 0);
   const openTotal = grandTotal - paidTotal;
   const selectedTotal = items
@@ -240,7 +242,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         </Text>
         <Text style={styles.grandTotal}>Gesamt: {formatPrice(grandTotal)}</Text>
       </View>
-      {paidMethods.size > 0 && (
+      {paidItems.length > 0 && (
         <View style={styles.paidSummaryRow}>
           <View>
             <Text style={styles.paidSummaryText}>Bezahlt: {formatPrice(paidTotal)}</Text>
@@ -276,14 +278,14 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => {
           const selected = selectedIds.has(item.id);
-          const paidMethod = paidMethods.get(item.id) ?? null;
+          const paidMethod = item.paid_method;
           const paid = paidMethod !== null;
           const total = itemTotal(item);
           const isDone = item.status === 'fertig';
           const row = (
             <TouchableOpacity
               style={[styles.itemRow, selected && styles.itemRowSelected, paid && styles.itemRowPaid]}
-              onPress={() => handleItemPress(item.id)}
+              onPress={() => handleItemPress(item.id, paidMethod)}
             >
               {paid ? (
                 <View style={styles.paidBadge}>
@@ -351,7 +353,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         {hasUnpriced && <Text style={styles.footerNote}>Enthält Positionen ohne hinterlegten Preis.</Text>}
         <View style={styles.footerRow}>
           <Text style={styles.footerLabel}>
-            Noch offen ({items.length - paidMethods.size}/{items.length})
+            Noch offen ({items.length - paidItems.length}/{items.length})
           </Text>
           <Text style={styles.footerValue}>{formatPrice(openTotal)}</Text>
         </View>
@@ -378,13 +380,34 @@ export default function TableBillingScreen({ route, navigation }: Props) {
             <Text style={styles.modalBody}>
               {selectedIds.size} Position(en) · {formatPrice(selectedTotal)}
             </Text>
-            <TouchableOpacity style={styles.paymentMethodButton} onPress={() => confirmPayment('karte')}>
-              <Text style={styles.paymentMethodButtonText}>Karte</Text>
+            {paymentError && <Text style={styles.errorText}>{paymentError}</Text>}
+            <TouchableOpacity
+              style={[styles.paymentMethodButton, savingPayment && styles.confirmButtonDisabled]}
+              onPress={() => confirmPayment('karte')}
+              disabled={savingPayment}
+            >
+              {savingPayment ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.paymentMethodButtonText}>Karte</Text>
+              )}
             </TouchableOpacity>
-            <TouchableOpacity style={styles.paymentMethodButton} onPress={() => confirmPayment('bargeld')}>
-              <Text style={styles.paymentMethodButtonText}>Bargeld</Text>
+            <TouchableOpacity
+              style={[styles.paymentMethodButton, savingPayment && styles.confirmButtonDisabled]}
+              onPress={() => confirmPayment('bargeld')}
+              disabled={savingPayment}
+            >
+              {savingPayment ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.paymentMethodButtonText}>Bargeld</Text>
+              )}
             </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelButton} onPress={() => setPaymentPromptOpen(false)}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => setPaymentPromptOpen(false)}
+              disabled={savingPayment}
+            >
               <Text style={styles.cancelButtonText}>Abbrechen</Text>
             </TouchableOpacity>
           </View>
@@ -405,7 +428,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               frei für neue Gäste. Die Bestellung wird dabei nicht gelöscht, sondern bleibt unter "Vergangene
               Tische" nachschlagbar, bis der Tagesabschluss gemacht wird.
               {openTotal > 0
-                ? ` Achtung: noch ${items.length - paidMethods.size} Position(en) im Wert von ${formatPrice(openTotal)} sind nicht als bezahlt markiert.`
+                ? ` Achtung: noch ${items.length - paidItems.length} Position(en) im Wert von ${formatPrice(openTotal)} sind nicht als bezahlt markiert.`
                 : ''}
             </Text>
             {closeError && <Text style={styles.errorText}>{closeError}</Text>}
