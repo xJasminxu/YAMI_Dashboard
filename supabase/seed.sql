@@ -96,6 +96,28 @@ on conflict (name_de) do update set
   sort_order = excluded.sort_order,
   kitchen_station = excluded.kitchen_station;
 
+-- Rabatt: kein zuzubereitendes Gericht/Getränk, sondern ein Preis-Abzug, den die
+-- Bedienung direkt im Bestell-Screen mit Beschreibung + Betrag hinzufügen kann (siehe
+-- OrderScreen.tsx, RabattDialog). Eigene Kategorie mit is_discount=true, damit
+-- DeviceTicketBoard.tsx (Küche/Bar) diese Positionen aus den Tickets ausblendet — sie
+-- sind nichts zum Zubereiten. menu_group/target_device sind hier nur wegen der not-null-
+-- Constraints gesetzt und ohne inhaltliche Bedeutung: OrderScreen.tsx überspringt
+-- is_discount-Kategorien beim Gruppieren, die Kategorie taucht also nie im normalen
+-- Kategorie-Raster auf.
+insert into categories (name_hanzi, name_de, menu_group, target_device, sort_order, is_discount) values
+  (null, 'rabatt', 'getraenke', 'bar', 100, true)
+on conflict (name_de) do update set
+  name_hanzi = excluded.name_hanzi,
+  menu_group = excluded.menu_group,
+  target_device = excluded.target_device,
+  sort_order = excluded.sort_order,
+  is_discount = excluded.is_discount;
+
+insert into menu_items (category_id, name_hanzi, name_de) values
+  ((select id from categories where name_de = 'rabatt'), null, 'Rabatt')
+on conflict (category_id, name_de) do update set
+  name_hanzi = excluded.name_hanzi;
+
 -- Tische: drinnen 1-21, Terrasse 1: 101-103, Terrasse 2: 201-204
 insert into tables (number)
 select generate_series(1, 21)
@@ -106,12 +128,16 @@ select generate_series(201, 204)
 on conflict (number) do nothing;
 
 -- Nudeln
-insert into menu_items (category_id, name_hanzi, name_de, item_code, price) values
-  ((select id from categories where name_de = 'nudeln'), '炒乌冬面', 'Sichuan Noodles', 'W10', 14.80)
+-- W10 verlangt zusätzlich eine Protein-Wahl Rind/Huhn (variant_options, ohne
+-- Preisunterschied), wie die Ajitama-Ramen.
+insert into menu_items (category_id, name_hanzi, name_de, item_code, price, variant_options) values
+  ((select id from categories where name_de = 'nudeln'), '炒乌冬面', 'Sichuan Noodles', 'W10', 14.80,
+    '[{"name_hanzi": "牛肉", "name_de": "Rind"}, {"name_hanzi": "鸡肉", "name_de": "Huhn"}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   item_code = excluded.item_code,
-  price = excluded.price;
+  price = excluded.price,
+  variant_options = excluded.variant_options;
 
 -- Korean BBQ (nur Menü-Namen + Preise bekannt, kein Code/Inhalt — bei Bedarf
 -- ergänzen, was in Menü 1/2/3 jeweils enthalten ist)
@@ -140,25 +166,35 @@ where category_id = (select id from categories where name_de = 'ramen')
 insert into menu_items (category_id, name_hanzi, name_de, item_code, price, variant_options, extra_options) values
   ((select id from categories where name_de = 'ramen'), '溏心蛋味噌拉面', 'Ajitama Miso Ramen', 'R1', 13.90,
     '[{"name_hanzi": "牛肉", "name_de": "Rind"}, {"name_hanzi": "鸡肉", "name_de": "Huhn"}]',
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
   ((select id from categories where name_de = 'ramen'), '天妇罗虾拉面', 'Ramen mit Garnelen Tempura', 'R2', 14.90, null,
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
   ((select id from categories where name_de = 'ramen'), '照烧鸡肉味噌拉面', 'Toriteri Miso Ramen', 'R3', 15.90, null,
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
   ((select id from categories where name_de = 'ramen'), '溏心蛋豚骨拉面', 'Ajitama Tonkotsu Ramen', 'R4', 13.90,
     '[{"name_hanzi": "牛肉", "name_de": "Rind"}, {"name_hanzi": "鸡肉", "name_de": "Huhn"}]',
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
   ((select id from categories where name_de = 'ramen'), '溏心蛋酱油拉面', 'Ajitama Shoyu Ramen', 'R5', 13.50,
     '[{"name_hanzi": "牛肉", "name_de": "Rind"}, {"name_hanzi": "鸡肉", "name_de": "Huhn"}]',
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
   ((select id from categories where name_de = 'ramen'), '素食豆腐拉面', 'Vegetarische Ramen mit Tofu', 'R6', 11.90, null,
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]')
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   item_code = excluded.item_code,
   price = excluded.price,
   variant_options = excluded.variant_options,
   extra_options = excluded.extra_options;
+
+-- Migration: die Fried-Chicken-Namen trugen früher den Suffix " 4x/8x" (z.B. 'Original
+-- Fried Chicken 4x/8x'), der beim Umbenennen auf den reinen Namen entfernt wurde. Da
+-- ON CONFLICT über name_de matcht, hat die Umbenennung die alten Zeilen nicht getroffen —
+-- sie blieben als doppelte Einträge in der Datenbank stehen. Deaktivieren statt löschen,
+-- falls Testbestellungen darauf verweisen (menu_items hat "on delete restrict").
+update menu_items
+set active = false
+where category_id = (select id from categories where name_de = 'fried chicken')
+  and name_de like '% 4x/8x';
 
 -- Fried Chicken
 -- Mengen-Dialog 4/8 Stück beim Bestellen (variant_options). Preis hängt von der
@@ -320,10 +356,11 @@ on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   variant_options = excluded.variant_options;
 
--- Wasser — Mengen-Dialog 0,33L/0,75L (variant_options).
+-- Wasser — kombinierter Art-/Mengen-Dialog (variant_options): Still/Sprudel × 0,33L/0,75L,
+-- gleiche Preise wie zuvor (2,90€/5,90€, unabhängig von still vs. sprudel).
 insert into menu_items (category_id, name_hanzi, name_de, variant_options) values
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Wasser',
-    '[{"name_hanzi": "0.33L", "name_de": "0,33L", "price": 2.90}, {"name_hanzi": "0.75L", "name_de": "0,75L", "price": 5.90}]')
+    '[{"name_hanzi": "0.33L still", "name_de": "Still 0,33L", "price": 2.90}, {"name_hanzi": "0.75L still", "name_de": "Still 0,75L", "price": 5.90}, {"name_hanzi": "0.33L sprudel", "name_de": "Sprudel 0,33L", "price": 2.90}, {"name_hanzi": "0.75L sprudel", "name_de": "Sprudel 0,75L", "price": 5.90}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   variant_options = excluded.variant_options;

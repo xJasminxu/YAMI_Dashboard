@@ -60,6 +60,12 @@ function itemsForStations(orders: GroupedOrder[], stations: KitchenStation[]): G
     .filter((order) => order.items.length > 0);
 }
 
+// Zeitpunkt, an dem die letzte Position der Bestellung fertig markiert wurde — bestimmt
+// die Reihenfolge der "Vergangene Bestellungen"-Liste (neueste zuerst).
+function latestDoneAt(order: GroupedOrder): number {
+  return order.items.reduce((latest, item) => Math.max(latest, item.done_at ? new Date(item.done_at).getTime() : 0), 0);
+}
+
 function countOpenItems(orders: GroupedOrder[]): number {
   return orders.reduce((sum, order) => sum + order.items.filter((item) => item.status === 'offen').length, 0);
 }
@@ -76,7 +82,20 @@ export default function DeviceTicketBoard({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const cardBackground = useMemo(() => cardBackgroundFor(colors), [colors]);
-  const { orders, loading, error, setItemStatus, setItemsStatus } = useDeviceOrders(targetDevice);
+  const { orders: rawOrders, loading, error, setItemStatus, setItemsStatus } = useDeviceOrders(targetDevice);
+  // Rabatt-Positionen sind Preis-Abzüge, kein zuzubereitendes Gericht/Getränk (siehe
+  // categories.is_discount) — auf Küchen-/Bar-Tickets werden sie deshalb ausgeblendet,
+  // bleiben aber in Tischübersicht/Abrechnung sichtbar (die nutzen useDeviceOrders direkt).
+  const orders = useMemo(
+    () =>
+      rawOrders
+        .map((order) => ({
+          ...order,
+          items: order.items.filter((item) => !item.menu_item.category.is_discount),
+        }))
+        .filter((order) => order.items.length > 0),
+    [rawOrders]
+  );
   const [tab, setTab] = useState<Tab>('offen');
   // Standardmäßig an — Küche/Bar können den Ton per Glocken-Button stumm schalten
   // (z.B. während einer Pause). Wird in AsyncStorage gemerkt, damit die Einstellung
@@ -116,7 +135,9 @@ export default function DeviceTicketBoard({
 
   const { open, done } = useMemo(() => {
     const open = orders.filter((order) => order.items.some((item) => item.status === 'offen'));
-    const done = orders.filter((order) => order.items.every((item) => item.status === 'fertig'));
+    const done = orders
+      .filter((order) => order.items.every((item) => item.status === 'fertig'))
+      .sort((a, b) => latestDoneAt(b) - latestDoneAt(a));
     return { open, done };
   }, [orders]);
 

@@ -6,5 +6,7 @@ export type RootStackParamList = {
   Status: undefined;
   TableDetail: { tableNumber: number };
   TableOverview: undefined;
-  TableBilling: { tableNumber: number };
+  // closed: true → Aufruf aus "Vergangene Tische" (TableOverviewScreen.tsx), zeigt die
+  // bereits abgeschlossene(n) Bestellung(en) dieser Tischnummer statt der aktuellen.
+  TableBilling: { tableNumber: number; closed?: boolean };
 };

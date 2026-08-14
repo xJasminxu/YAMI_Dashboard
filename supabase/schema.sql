@@ -46,6 +46,15 @@ alter table categories alter column name_hanzi drop not null;
 alter table categories add column if not exists kitchen_station text
   check (kitchen_station in ('vorspeise', 'hauptspeise', 'barbecue'));
 
+-- Migration: is_discount-Spalte (nachträglich hinzugefügt). Markiert die "Rabatt"-
+-- Kategorie (siehe seed.sql) — ihre Positionen sind Preis-Abzüge, die die Bedienung im
+-- Bestell-Screen mit Beschreibung + Betrag hinzufügt, keine zuzubereitenden Gerichte/
+-- Getränke. DeviceTicketBoard.tsx blendet Positionen aus is_discount-Kategorien deshalb
+-- aus den Küchen-/Bar-Tickets aus; in der Tischübersicht/vorläufigen Abrechnung
+-- (TableBillingScreen.tsx etc.) bleiben sie sichtbar, damit der Rabatt vom Gesamtbetrag
+-- abgezogen wird.
+alter table categories add column if not exists is_discount boolean not null default false;
+
 -- ---------------------------------------------------------------------------
 -- menu_items
 -- Konkrete Gerichte/Getränke innerhalb einer Kategorie.
@@ -103,6 +112,18 @@ create table if not exists orders (
 
 create index if not exists orders_table_id_idx on orders(table_id);
 
+-- Migration: closed_at-Spalte (nachträglich hinzugefügt). null = Bestellung läuft noch
+-- (zählt für Küche/Bar/Status/Tischübersicht als "aktueller Tisch"). Gesetzt, sobald die
+-- Bedienung in TableBillingScreen.tsx "Tisch abschließen" antippt — der Tisch verschwindet
+-- dadurch aus Küche/Bar/Status und ist sofort wieder frei für neue Gäste (neue orders-Zeile
+-- für dieselbe Tischnummer bekommt wieder closed_at=null), OHNE dass die Bestellung
+-- gelöscht wird. TableOverviewScreen.tsx zeigt geschlossene Bestellungen weiterhin unter
+-- "Vergangene Tische" an, damit man sie bei Rückfragen noch nachschlagen kann. Ein
+-- echtes Löschen (delete auf orders) passiert nur noch beim Tagesabschluss
+-- (RoleSelectScreen.tsx), unabhängig von closed_at.
+alter table orders add column if not exists closed_at timestamptz;
+create index if not exists orders_closed_at_idx on orders(closed_at);
+
 -- ---------------------------------------------------------------------------
 -- order_items
 -- Einzelne Position innerhalb einer Bestellung. status wird von Küche/Bar
@@ -134,6 +155,16 @@ create table if not exists order_items (
 
 create index if not exists order_items_order_id_idx on order_items(order_id);
 create index if not exists order_items_status_idx on order_items(status);
+
+-- Migration: paid_method-Spalte (nachträglich hinzugefügt). null = Position ist in der
+-- vorläufigen Abrechnung (TableBillingScreen.tsx) noch nicht als bezahlt markiert.
+-- Gesetzt, sobald die Bedienung eine Auswahl per "Bezahlt" mit Karte oder Bargeld
+-- markiert — bewusst in der DB statt nur als lokaler Screen-Zustand, damit die
+-- Zahlungsart auch nach "Tisch abschließen" beim späteren Nachschlagen unter
+-- "Vergangene Tische" noch sichtbar ist. Keine Buchung/Rechnung — dient weiterhin nur
+-- der Orientierung, welcher Anteil später gegen Kartenleser/Kasse abgeglichen wird.
+alter table order_items add column if not exists paid_method text
+  check (paid_method in ('karte', 'bargeld'));
 
 -- ---------------------------------------------------------------------------
 -- Realtime: order_items und orders für Live-Updates auf Küche/Bar aktivieren.
@@ -192,6 +223,8 @@ drop policy if exists "allow all read orders" on orders;
 create policy "allow all read orders" on orders for select using (true);
 drop policy if exists "allow all write orders" on orders;
 create policy "allow all write orders" on orders for insert with check (true);
+drop policy if exists "allow all update orders" on orders;
+create policy "allow all update orders" on orders for update using (true); -- für "Tisch abschließen" (closed_at)
 drop policy if exists "allow all delete orders" on orders;
 create policy "allow all delete orders" on orders for delete using (true); -- für Tagesabschluss
 

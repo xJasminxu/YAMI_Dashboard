@@ -7,7 +7,7 @@ export interface DeviceOrderItem extends OrderItem {
 }
 
 interface OrderItemRow extends OrderItem {
-  order: { id: string; table_id: string; created_at: string; table: RestaurantTable };
+  order: { id: string; table_id: string; created_at: string; closed_at: string | null; table: RestaurantTable };
   menu_item: MenuItem & { category: Category };
 }
 
@@ -15,14 +15,25 @@ export interface GroupedOrder {
   orderId: string;
   table: RestaurantTable;
   createdAt: string;
+  // null = Bestellung läuft noch, siehe schema.sql/orders.closed_at.
+  closedAt: string | null;
   items: DeviceOrderItem[];
+}
+
+interface UseDeviceOrdersOptions {
+  // Standardmäßig false: abgeschlossene Tische (orders.closed_at gesetzt, siehe "Tisch
+  // abschließen" in TableBillingScreen.tsx) sollen in Küche/Bar/Status nicht mehr
+  // auftauchen. TableOverviewScreen.tsx setzt includeClosed=true, um zusätzlich die
+  // "Vergangene Tische"-Gruppe füllen zu können.
+  includeClosed?: boolean;
 }
 
 // Lädt offene + fertige order_items für ein Gerät (kitchen/bar), gruppiert nach
 // Bestellung/Tisch und sortiert nach Kategorie-sort_order. Hält sich per
 // Realtime-Subscription auf order_items aktuell (Refetch bei jeder Änderung —
 // die Datenmenge ist klein genug, dass das kein Performance-Problem ist).
-export function useDeviceOrders(targetDevice: TargetDevice) {
+export function useDeviceOrders(targetDevice: TargetDevice, options: UseDeviceOrdersOptions = {}) {
+  const { includeClosed = false } = options;
   const [orders, setOrders] = useState<GroupedOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,11 +49,11 @@ export function useDeviceOrders(targetDevice: TargetDevice) {
       .from('order_items')
       .select(
         `
-        id, order_id, menu_item_id, status, variant_hanzi, variant_de, extras, unit_price, note, created_at, done_at,
-        order:orders!inner(id, table_id, created_at, table:tables(id, number)),
+        id, order_id, menu_item_id, status, variant_hanzi, variant_de, extras, unit_price, note, created_at, done_at, paid_method,
+        order:orders!inner(id, table_id, created_at, closed_at, table:tables(id, number)),
         menu_item:menu_items!inner(
           id, category_id, name_hanzi, name_de, item_code, active, price, created_at,
-          category:categories!inner(id, name_hanzi, name_de, menu_group, target_device, sort_order, kitchen_station, created_at)
+          category:categories!inner(id, name_hanzi, name_de, menu_group, target_device, sort_order, kitchen_station, is_discount, created_at)
         )
         `
       )
@@ -59,9 +70,10 @@ export function useDeviceOrders(targetDevice: TargetDevice) {
     const byOrder = new Map<string, GroupedOrder>();
     for (const row of data ?? []) {
       const { order, ...item } = row;
+      if (!includeClosed && order.closed_at !== null) continue;
       let group = byOrder.get(order.id);
       if (!group) {
-        group = { orderId: order.id, table: order.table, createdAt: order.created_at, items: [] };
+        group = { orderId: order.id, table: order.table, createdAt: order.created_at, closedAt: order.closed_at, items: [] };
         byOrder.set(order.id, group);
       }
       group.items.push(item);
@@ -74,15 +86,22 @@ export function useDeviceOrders(targetDevice: TargetDevice) {
     setOrders(Array.from(byOrder.values()));
     setError(null);
     setLoading(false);
-  }, [targetDevice]);
+  }, [targetDevice, includeClosed]);
 
   useEffect(() => {
     setLoading(true);
     fetchOrders();
 
+    // Auf "orders" mit abonnieren, nicht nur "order_items": "Tisch abschließen" setzt
+    // orders.closed_at per UPDATE, ohne order_items anzufassen — ohne diesen zweiten
+    // Listener würden andere offene Küche/Bar/Status-Bildschirme das Verschwinden des
+    // Tisches erst beim nächsten ohnehin fälligen Refetch mitbekommen, nicht sofort.
     const channel = supabase
       .channel(`order_items:${targetDevice}:${instanceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
+        fetchOrders();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchOrders();
       })
       .subscribe();
