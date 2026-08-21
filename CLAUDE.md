@@ -40,7 +40,10 @@ Rolle des Geräts:
    `categories.kitchen_station`), damit eine große laufende Bestellung nicht die Vorspeisen
    einer neu eingegangenen Bestellung unter sich verschwinden lässt. Die "Fertig"-Historie
    bleibt eine einfache Liste.
-3. **Bar** — zeigt nur Items mit `target_device = 'bar'`.
+3. **Bar** — zeigt nur Items mit `target_device = 'bar'`. Der "Offen"-Tab ist ebenso in
+   zwei unabhängig scrollbare Spalten aufgeteilt (Getränke | Nachspeisen, siehe
+   `categories.menu_group`), aus demselben Grund wie bei der Küche. Die "Fertig"-Historie
+   bleibt eine einfache Liste.
 4. **Status** (optional, für Bedienungen) — Übersicht aller **offenen** Tische mit
    Fortschritt (z.B. "Tisch 4: 2/5 fertig"), gespeist aus denselben Realtime-Daten wie
    Küche/Bar.
@@ -100,7 +103,7 @@ und tragen zusätzlich Name auf Hanzi (primär) und Deutsch (sekundär).
 Sortierung ist rein `sort_order`-Feld auf der `categories`-Tabelle, client-seitig angewendet.
 Kein Backend-Logik nötig.
 
-## Küchen-Stationsspalten (Vorspeise / Hauptspeise & Barbecue)
+## Zwei-Spalten-Ansicht im "Offen"-Tab (Küche: Stationen, Bar: Getränke/Nachspeisen)
 
 Unabhängig von `sort_order` (das nur die Reihenfolge *innerhalb* einer Ticket-Karte
 bestimmt) hat jede Küchen-Kategorie zusätzlich ein `kitchen_station`-Feld
@@ -111,8 +114,21 @@ jede mit eigenen Ticket-Karten und eigenem Fortschritt (eine Bestellung kann in 
 Vorspeise-Spalte schon grün sein, während ihre Hauptspeise-Karte noch offen ist). Grund:
 ohne die Aufteilung verschwanden die Vorspeisen einer neu eingegangenen Bestellung leicht
 unter einer bereits laufenden großen Bestellung, obwohl Vorspeisen oft sofort losgehen
-könnten. Bar-Kategorien haben `kitchen_station = null` und sind von der Aufteilung nicht
-betroffen — die Bar-Ansicht bleibt eine einzelne Liste.
+könnten. Bar-Kategorien haben `kitchen_station = null` und sind von dieser Aufteilung
+nicht betroffen.
+
+Die Bar hat stattdessen dieselbe Zwei-Spalten-Idee, aber getrennt nach `menu_group`
+(Getränke links, Nachspeisen rechts) statt nach `kitchen_station` — Bar-Kategorien haben
+kein `kitchen_station`, aber `menu_group` ist ohnehin schon auf jeder Kategorie vorhanden,
+ein eigenes Feld war dafür nicht nötig. Aus demselben Grund wie bei der Küche: ohne die
+Trennung verschwinden neu eingegangene Getränke leicht unter einer bereits laufenden
+großen Nachspeisen-Bestellung (oder umgekehrt). Beide Spalten (Küche wie Bar) zeigen die
+Ticket-Karten außerdem als Zwei-Spalten-Kartenraster (`columns={2}` in `TicketList`) statt
+einer einzelnen tief scrollenden Liste, damit auf einen Blick mehr offene Tickets sichtbar
+sind. In beiden Fällen fällt eine Karte aus ihrer Spalte raus, sobald alle Positionen
+*dieser* Spalte abgehakt sind — unabhängig davon, ob die Bestellung insgesamt (in der
+jeweils anderen Spalte) noch offen ist. Nur der "Offen"-Tab ist aufgeteilt; die "Fertig"-
+Historie bleibt bei beiden Geräten eine einfache Liste.
 
 ## Status-Workflow
 

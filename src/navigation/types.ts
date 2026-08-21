@@ -1,6 +1,9 @@
 export type RootStackParamList = {
   RoleSelect: undefined;
-  Order: undefined;
+  // tableNumber optional: gesetzt, wenn die Bestellaufnahme über den "+"-Button einer
+  // Tischkarte in der Tischübersicht (TableOverviewScreen.tsx) geöffnet wurde — dann ist
+  // die Tischnummer im Bestell-Screen schon vorausgefüllt statt manuell einzutippen.
+  Order: { tableNumber?: number } | undefined;
   Kitchen: undefined;
   Bar: undefined;
   Status: undefined;

@@ -133,6 +133,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
           row={row}
           styles={styles}
           onPress={() => navigation.navigate('TableBilling', { tableNumber: row.tableNumber })}
+          onNewOrder={() => navigation.navigate('Order', { tableNumber: row.tableNumber })}
         />
       ))}
       {past.length > 0 && (
@@ -145,6 +146,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
               styles={styles}
               past
               onPress={() => navigation.navigate('TableBilling', { tableNumber: row.tableNumber, closed: true })}
+              onNewOrder={() => navigation.navigate('Order', { tableNumber: row.tableNumber })}
             />
           ))}
         </>
@@ -160,37 +162,52 @@ function TableCard({
   row,
   past = false,
   onPress,
+  onNewOrder,
   styles,
 }: {
   row: TableRow;
   past?: boolean;
   onPress: () => void;
+  // Öffnet die Bestellaufnahme mit dieser Tischnummer vorausgefüllt (siehe
+  // RootStackParamList['Order']), statt erst zurück ins Hauptmenü zu müssen — z.B. um bei
+  // einem bereits abgeschlossenen ("Vergangene Tische") Tisch eine neue Runde für frische
+  // Gäste aufzunehmen, ohne die Nummer erneut einzutippen.
+  onNewOrder: () => void;
   styles: OverviewStyles;
 }) {
   return (
-    <TouchableOpacity style={[styles.card, past && styles.cardPast]} onPress={onPress}>
-      <View style={styles.cardLeft}>
-        <View style={styles.tableLabelRow}>
-          <Text style={styles.tableLabel}>Tisch {row.tableNumber}</Text>
-          {/* Reiner Hinweis, dass eine Notiz existiert — bearbeitet wird sie ausschließlich
-              in TableBillingScreen.tsx (Checkout), damit hier nichts extra angetippt werden
-              muss, um sie zu sehen. */}
-          {row.note && <Text style={styles.noteIndicator}>📝</Text>}
+    <View style={[styles.card, past && styles.cardPast]}>
+      <TouchableOpacity style={styles.cardMain} onPress={onPress}>
+        <View style={styles.cardLeft}>
+          <View style={styles.tableLabelRow}>
+            <Text style={styles.tableLabel}>Tisch {row.tableNumber}</Text>
+            {/* Reiner Hinweis, dass eine Notiz existiert — bearbeitet wird sie ausschließlich
+                in TableBillingScreen.tsx (Checkout), damit hier nichts extra angetippt werden
+                muss, um sie zu sehen. */}
+            {row.note && <Text style={styles.noteIndicator}>📝</Text>}
+          </View>
+          {past && row.closedAt && (
+            <Text style={styles.closedAtText}>Abgeschlossen: {formatDateTime(row.closedAt)}</Text>
+          )}
         </View>
-        {past && row.closedAt && (
-          <Text style={styles.closedAtText}>Abgeschlossen: {formatDateTime(row.closedAt)}</Text>
-        )}
-      </View>
-      <View style={styles.cardRight}>
-        <Text style={styles.cardSumText}>
-          {formatPrice(row.priceSum)}
-          {row.hasUnpriced ? '*' : ''}
-        </Text>
-        <Text style={styles.progressText}>
-          {row.done}/{row.total} fertig
-        </Text>
-      </View>
-    </TouchableOpacity>
+        <View style={styles.cardRight}>
+          <Text style={styles.cardSumText}>
+            {formatPrice(row.priceSum)}
+            {row.hasUnpriced ? '*' : ''}
+          </Text>
+          <Text style={styles.progressText}>
+            {row.done}/{row.total} fertig
+          </Text>
+        </View>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.newOrderButton}
+        onPress={onNewOrder}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
+        <Text style={styles.newOrderButtonText}>+</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -222,9 +239,27 @@ const createStyles = (colors: ThemeColors) =>
       padding: 16,
       marginBottom: 12,
       flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    cardMain: {
+      flex: 1,
+      flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
     },
+    // "+"-Button für "Neue Bestellung" (siehe onNewOrder) — eigener Tap-Bereich neben dem
+    // Kartenkörper, damit er nicht mit dem Antippen der Karte selbst (öffnet die
+    // Abrechnung) kollidiert.
+    newOrderButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    newOrderButtonText: { fontSize: 20, fontWeight: '700', color: colors.primary, lineHeight: 22 },
     cardPast: { opacity: 0.6 },
     sectionTitle: {
       fontSize: 14,

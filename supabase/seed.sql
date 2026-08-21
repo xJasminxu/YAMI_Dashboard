@@ -343,17 +343,27 @@ insert into menu_items (category_id, name_hanzi, name_de, variant_options) value
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Cola',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Spezi',
-    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.5L", "name_de": "0,5L", "price": 4.90}]'),
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Cola Zero',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Sprite',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Fanta',
-    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
-  ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Milkis',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
+  variant_options = excluded.variant_options;
+
+-- Milkis — anders als die übrigen Softgetränke oben nur in einer Größe (Dose), fester
+-- Preis ohne Mengen-Dialog. variant_options wird hier explizit auf null gesetzt, da Milkis
+-- früher Teil des 0,2L/0,4L-Dialogs war — ohne das würde die alte variant_options-Belegung
+-- beim erneuten Einspielen stehen bleiben, weil ON CONFLICT DO UPDATE nur die Spalten
+-- anfasst, die man ihm nennt.
+insert into menu_items (category_id, name_hanzi, name_de, price, variant_options) values
+  ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Milkis', 3.90, null)
+on conflict (category_id, name_de) do update set
+  name_hanzi = excluded.name_hanzi,
+  price = excluded.price,
   variant_options = excluded.variant_options;
 
 -- Wasser — kombinierter Art-/Mengen-Dialog (variant_options): Still/Sprudel × 0,33L/0,75L,
@@ -373,7 +383,7 @@ insert into menu_items (category_id, name_hanzi, name_de, variant_options) value
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Apfel',
     '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Mango',
-    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.5L 果汁苏打", "name_de": "0,5L Schorle", "price": 4.90}]'),
+    '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Lychee',
     '[{"name_hanzi": "0.2L 纯果汁", "name_de": "0,2L Saft", "price": 3.90}, {"name_hanzi": "0.2L 果汁苏打", "name_de": "0,2L Schorle", "price": 2.90}, {"name_hanzi": "0.4L 纯果汁", "name_de": "0,4L Saft", "price": 4.90}, {"name_hanzi": "0.4L 果汁苏打", "name_de": "0,4L Schorle", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Maracuja',

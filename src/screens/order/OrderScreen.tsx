@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import type { NavigationAction } from '@react-navigation/native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   ActivityIndicator,
   Animated,
@@ -18,9 +19,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMenu } from '../../hooks/useMenu';
 import { supabase } from '../../lib/supabase';
+import type { RootStackParamList } from '../../navigation/types';
 import type { MenuGroup, MenuItem, VariantOption } from '../../types/database';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
+
+type Props = NativeStackScreenProps<RootStackParamList, 'Order'>;
 
 // Wird als Prop an alle Dialog-Unterkomponenten weitergereicht, da deren Farben vom
 // aktuellen Hell-/Dunkelmodus abhängen (siehe createStyles unten) und sie selbst nicht
@@ -71,6 +75,14 @@ function cartKeyFor(menuItemId: string, variantDe: string | null, extras: CartEx
   return `${menuItemId}::${variantDe ?? ''}::${extrasSignature(extras)}`;
 }
 
+// Bearbeitbar (Variante/Extras/Beschreibung nachträglich ändern, siehe handleEditCartLine)
+// ist alles, was beim Hinzufügen schon einen eigenen Dialog hatte — z.B. Ramen (Rind/Huhn +
+// Ajitama-Ei/Mais/...), oder "Diverses" (Freitext + Preis). Items ohne jede Auswahl (fixer
+// Preis, kein Dialog) haben nichts zu bearbeiten.
+function isEditableMenuItem(item: MenuItem): boolean {
+  return item.is_custom_entry || (item.variant_options?.length ?? 0) > 0 || (item.extra_options?.length ?? 0) > 0;
+}
+
 // Preis für eine Bestellzeile (eine Portion): Variantenpreis falls vorhanden, sonst
 // der Item-Grundpreis, plus alle Extras mit ihrer jeweiligen Menge.
 function lineUnitTotal(line: Pick<CartLine, 'unitPrice' | 'extras'>): number | null {
@@ -104,7 +116,7 @@ function itemPriceLabel(item: MenuItem): string | null {
   return null;
 }
 
-export default function OrderScreen() {
+export default function OrderScreen({ route }: Props) {
   const navigation = useNavigation();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
@@ -114,12 +126,20 @@ export default function OrderScreen() {
   const { categories, loading, error } = useMenu();
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [tableNumber, setTableNumber] = useState('');
+  // Vorausgefüllt, wenn über den "+"-Button einer Tischkarte in der Tischübersicht
+  // aufgerufen (siehe RootStackParamList['Order'] und TableOverviewScreen.tsx) — sonst
+  // leer wie bisher, Tischnummer wird dann wie gewohnt über das Numpad eingetippt.
+  const [tableNumber, setTableNumber] = useState(route.params?.tableNumber ? String(route.params.tableNumber) : '');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [variantPromptItem, setVariantPromptItem] = useState<MenuItem | null>(null);
   const [optionsPromptItem, setOptionsPromptItem] = useState<MenuItem | null>(null);
   const [customEntryItem, setCustomEntryItem] = useState<MenuItem | null>(null);
+  // Wenn gesetzt, bearbeitet der gerade offene Varianten-/Extras-/Diverses-Dialog eine
+  // bereits im Warenkorb liegende Position (siehe handleEditCartLine/updateCartLine)
+  // statt eine neue hinzuzufügen — z.B. wenn beim Ramen doch noch last-minute ein Extra
+  // dazu soll, bevor die Bestellung abgeschickt ist.
+  const [editingCartKey, setEditingCartKey] = useState<string | null>(null);
   const [rabattDialogOpen, setRabattDialogOpen] = useState(false);
   const [numpadOpen, setNumpadOpen] = useState(false);
   const [noteEditLine, setNoteEditLine] = useState<CartLine | null>(null);
@@ -244,6 +264,25 @@ export default function OrderScreen() {
   // huckepack über den Varianten-Mechanismus wie das Diverses-Item (siehe confirmRabatt).
   const rabattItem = useMemo(() => categories.find((c) => c.is_discount)?.items[0] ?? null, [categories]);
 
+  // Nachschlagen des vollen MenuItem (inkl. variant_options/extra_options) zu einer
+  // Warenkorb-Zeile — die Zeile selbst kennt nur menuItemId, für den Bearbeiten-Dialog
+  // (handleEditCartLine) wird aber die Options-Definition des Items gebraucht.
+  const menuItemsById = useMemo(() => {
+    const map = new Map<string, MenuItem>();
+    for (const category of categories) {
+      for (const item of category.items) map.set(item.id, item);
+    }
+    return map;
+  }, [categories]);
+
+  // Die gerade zum Bearbeiten geöffnete Warenkorb-Zeile (siehe editingCartKey) — liefert
+  // die aktuelle Variante/Extras/Beschreibung, mit der die Dialoge unten vorausgefüllt
+  // werden, statt leer zu starten.
+  const editingLine = useMemo(
+    () => (editingCartKey ? cart.find((l) => l.cartKey === editingCartKey) ?? null : null),
+    [cart, editingCartKey]
+  );
+
   const activeCategory = categories.find((c) => c.id === activeCategoryId) ?? null;
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const cartTotal = cart.reduce((sum, line) => sum + (lineUnitTotal(line) ?? 0) * line.quantity, 0);
@@ -277,6 +316,44 @@ export default function OrderScreen() {
     });
   }
 
+  // Schreibt eine neue Varianten-/Extras-Auswahl auf eine bereits im Warenkorb liegende
+  // Zeile (siehe editingCartKey/handleEditCartLine), statt eine neue Zeile anzuhängen wie
+  // addToCart. cartKey hängt von Variante+Extras ab, ändert sich beim Bearbeiten also meist
+  // mit — trifft die neue Kombination zufällig eine bereits existierende andere Zeile
+  // (z.B. Extras nachträglich auf "keine" reduziert, sodass sie einer bestehenden Zeile
+  // ohne Extras entspricht), werden die Mengen zusammengeführt statt zwei Zeilen mit
+  // demselben cartKey zu erzeugen (bricht sonst FlatList-Keys und die Warenkorb-Summe).
+  function updateCartLine(cartKey: string, item: MenuItem, variant: VariantOption | null, extras: CartExtra[]) {
+    setCart((prev) => {
+      const line = prev.find((l) => l.cartKey === cartKey);
+      if (!line) return prev;
+
+      const unitPrice = variant?.price ?? item.price ?? null;
+      const newCartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras);
+
+      if (newCartKey === cartKey) {
+        return prev.map((l) =>
+          l.cartKey === cartKey
+            ? { ...l, variantHanzi: variant?.name_hanzi ?? null, variantDe: variant?.name_de ?? null, unitPrice, extras }
+            : l
+        );
+      }
+
+      const collision = prev.find((l) => l.cartKey === newCartKey);
+      if (collision) {
+        return prev
+          .filter((l) => l.cartKey !== cartKey)
+          .map((l) => (l.cartKey === newCartKey ? { ...l, quantity: l.quantity + line.quantity } : l));
+      }
+
+      return prev.map((l) =>
+        l.cartKey === cartKey
+          ? { ...l, cartKey: newCartKey, variantHanzi: variant?.name_hanzi ?? null, variantDe: variant?.name_de ?? null, unitPrice, extras }
+          : l
+      );
+    });
+  }
+
   function updateNote(cartKey: string, note: string) {
     setCart((prev) => prev.map((line) => (line.cartKey === cartKey ? { ...line, note } : line)));
   }
@@ -303,9 +380,32 @@ export default function OrderScreen() {
     }
   }
 
+  // Öffnet denselben Dialog, den das Item beim ursprünglichen Hinzufügen gezeigt hätte,
+  // aber im Bearbeiten-Modus (editingCartKey) — z.B. wenn ein Gast beim schon im Warenkorb
+  // liegenden Ramen doch noch last-minute ein Extra möchte, bevor die Bestellung
+  // abgeschickt ist. Der Dialog selbst startet dank editingLine (siehe oben) mit der
+  // aktuellen Auswahl der Zeile vorausgefüllt statt leer.
+  function handleEditCartLine(line: CartLine) {
+    const item = menuItemsById.get(line.menuItemId);
+    if (!item || !isEditableMenuItem(item)) return;
+    setEditingCartKey(line.cartKey);
+    if (item.is_custom_entry) {
+      setCustomEntryItem(item);
+    } else if (item.extra_options && item.extra_options.length > 0) {
+      setOptionsPromptItem(item);
+    } else if (item.variant_options && item.variant_options.length > 0) {
+      setVariantPromptItem(item);
+    }
+  }
+
   function chooseVariant(variant: VariantOption) {
     if (!variantPromptItem) return;
-    addToCart(variantPromptItem, variant);
+    if (editingCartKey) {
+      updateCartLine(editingCartKey, variantPromptItem, variant, []);
+      setEditingCartKey(null);
+    } else {
+      addToCart(variantPromptItem, variant);
+    }
     setVariantPromptItem(null);
   }
 
@@ -314,7 +414,13 @@ export default function OrderScreen() {
     // Freitext-Beschreibung + Preis fahren huckepack auf dem Varianten-Mechanismus mit
     // (siehe addToCart) statt eines eigenen Datenpfads — Preis-Summierung, Warenkorb-
     // Anzeige und order_items-Insert funktionieren dadurch ohne Sonderfall.
-    addToCart(customEntryItem, { name_hanzi: description, name_de: description, price: price ?? undefined });
+    const variant = { name_hanzi: description, name_de: description, price: price ?? undefined };
+    if (editingCartKey) {
+      updateCartLine(editingCartKey, customEntryItem, variant, []);
+      setEditingCartKey(null);
+    } else {
+      addToCart(customEntryItem, variant);
+    }
     setCustomEntryItem(null);
   }
 
@@ -329,7 +435,13 @@ export default function OrderScreen() {
 
   function confirmOptions(variant: VariantOption | null, extras: CartExtra[]) {
     if (!optionsPromptItem) return;
-    addToCart(optionsPromptItem, variant, extras.filter((e) => e.quantity > 0));
+    const filteredExtras = extras.filter((e) => e.quantity > 0);
+    if (editingCartKey) {
+      updateCartLine(editingCartKey, optionsPromptItem, variant, filteredExtras);
+      setEditingCartKey(null);
+    } else {
+      addToCart(optionsPromptItem, variant, filteredExtras);
+    }
     setOptionsPromptItem(null);
   }
 
@@ -563,38 +675,51 @@ export default function OrderScreen() {
                   style={styles.cartItemsList}
                   data={cart}
                   keyExtractor={(line) => line.cartKey}
-                  renderItem={({ item: line }) => (
-                    <View style={styles.cartLine}>
-                      <View style={styles.cartLineTextWrap}>
-                        <Text style={styles.cartLineText}>
-                          {line.quantity}× {line.itemCode ? `${line.itemCode} · ` : ''}
-                          {line.nameHanzi} ({line.nameDe})
-                          {line.variantDe ? ` · ${line.variantHanzi} (${line.variantDe})` : ''}
-                        </Text>
-                        {line.extras.length > 0 && (
-                          <Text style={styles.cartLineExtras}>
-                            {line.extras.map((e) => `+${e.quantity} ${e.nameHanzi} (${e.nameDe})`).join(', ')}
+                  renderItem={({ item: line }) => {
+                    const menuItem = menuItemsById.get(line.menuItemId);
+                    const editable = menuItem ? isEditableMenuItem(menuItem) : false;
+                    return (
+                      <View style={styles.cartLine}>
+                        <View style={styles.cartLineTextWrap}>
+                          <Text style={styles.cartLineText}>
+                            {line.quantity}× {line.itemCode ? `${line.itemCode} · ` : ''}
+                            {line.nameHanzi} ({line.nameDe})
+                            {line.variantDe ? ` · ${line.variantHanzi} (${line.variantDe})` : ''}
                           </Text>
-                        )}
-                        {lineUnitTotal(line) !== null && (
-                          <Text style={styles.cartLinePrice}>
-                            {formatPrice(lineUnitTotal(line)! * line.quantity)}
-                          </Text>
-                        )}
-                        <TouchableOpacity style={styles.noteField} onPress={() => setNoteEditLine(line)}>
-                          <Text
-                            style={line.note ? styles.noteFieldText : styles.noteFieldPlaceholder}
-                            numberOfLines={2}
+                          {line.extras.length > 0 && (
+                            <Text style={styles.cartLineExtras}>
+                              {line.extras.map((e) => `+${e.quantity} ${e.nameHanzi} (${e.nameDe})`).join(', ')}
+                            </Text>
+                          )}
+                          {lineUnitTotal(line) !== null && (
+                            <Text style={styles.cartLinePrice}>
+                              {formatPrice(lineUnitTotal(line)! * line.quantity)}
+                            </Text>
+                          )}
+                          <TouchableOpacity style={styles.noteField} onPress={() => setNoteEditLine(line)}>
+                            <Text
+                              style={line.note ? styles.noteFieldText : styles.noteFieldPlaceholder}
+                              numberOfLines={2}
+                            >
+                              {line.note || 'Notiz…'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                        {editable && (
+                          <TouchableOpacity
+                            onPress={() => handleEditCartLine(line)}
+                            style={styles.cartLineEditButton}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           >
-                            {line.note || 'Notiz…'}
-                          </Text>
+                            <Text style={styles.cartLineEditButtonText}>✎</Text>
+                          </TouchableOpacity>
+                        )}
+                        <TouchableOpacity onPress={() => removeFromCart(line.cartKey)}>
+                          <Text style={styles.removeText}>−</Text>
                         </TouchableOpacity>
                       </View>
-                      <TouchableOpacity onPress={() => removeFromCart(line.cartKey)}>
-                        <Text style={styles.removeText}>−</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                    );
+                  }}
                 />
               </Animated.View>
               {submitError && <Text style={styles.errorText}>{submitError}</Text>}
@@ -623,19 +748,34 @@ export default function OrderScreen() {
       <VariantDialog
         item={variantPromptItem}
         onChoose={chooseVariant}
-        onCancel={() => setVariantPromptItem(null)}
+        onCancel={() => {
+          setVariantPromptItem(null);
+          setEditingCartKey(null);
+        }}
         styles={styles}
       />
       <ItemOptionsDialog
         item={optionsPromptItem}
+        initialVariantDe={editingLine?.variantDe ?? null}
+        initialExtras={editingLine?.extras ?? []}
+        editing={editingCartKey !== null}
         onConfirm={confirmOptions}
-        onCancel={() => setOptionsPromptItem(null)}
+        onCancel={() => {
+          setOptionsPromptItem(null);
+          setEditingCartKey(null);
+        }}
         styles={styles}
       />
       <CustomEntryDialog
         item={customEntryItem}
+        initialDescription={editingCartKey ? editingLine?.variantDe ?? '' : ''}
+        initialPrice={editingCartKey ? editingLine?.unitPrice ?? null : null}
+        editing={editingCartKey !== null}
         onConfirm={confirmCustomEntry}
-        onCancel={() => setCustomEntryItem(null)}
+        onCancel={() => {
+          setCustomEntryItem(null);
+          setEditingCartKey(null);
+        }}
         styles={styles}
       />
       <NoteDialog line={noteEditLine} onConfirm={confirmNote} onCancel={cancelNote} styles={styles} />
@@ -802,14 +942,23 @@ function VariantDialog({
 }
 
 // Dialog für "Diverses"-Items (menu_items.is_custom_entry): Bedienung trägt Beschreibung
-// + Preis frei ein, statt aus einer festen Speisekarten-Position zu wählen.
+// + Preis frei ein, statt aus einer festen Speisekarten-Position zu wählen. Auch für das
+// Bearbeiten einer bereits im Warenkorb liegenden Diverses-Zeile wiederverwendet (siehe
+// editing/initialDescription/initialPrice in OrderScreen), dann mit dem aktuellen Stand
+// vorausgefüllt statt leer zu starten.
 function CustomEntryDialog({
   item,
+  initialDescription = '',
+  initialPrice = null,
+  editing = false,
   onConfirm,
   onCancel,
   styles,
 }: {
   item: MenuItem | null;
+  initialDescription?: string;
+  initialPrice?: number | null;
+  editing?: boolean;
   onConfirm: (description: string, price: number | null) => void;
   onCancel: () => void;
   styles: OrderStyles;
@@ -818,13 +967,14 @@ function CustomEntryDialog({
   const [priceText, setPriceText] = useState('');
   const [priceNumpadOpen, setPriceNumpadOpen] = useState(false);
 
-  // Bei jedem neu geöffneten Item die lokale Eingabe zurücksetzen.
+  // Bei jedem neu geöffneten Item die lokale Eingabe zurücksetzen — auf initialDescription/
+  // initialPrice beim Bearbeiten, sonst leer (siehe Kommentar oben).
   const itemId = item?.id ?? null;
   const [resetForItemId, setResetForItemId] = useState<string | null>(null);
   if (itemId !== resetForItemId) {
     setResetForItemId(itemId);
-    setDescription('');
-    setPriceText('');
+    setDescription(initialDescription);
+    setPriceText(initialPrice !== null ? String(initialPrice).replace('.', ',') : '');
     setPriceNumpadOpen(false);
   }
 
@@ -872,7 +1022,9 @@ function CustomEntryDialog({
             onPress={handleConfirm}
             disabled={!canConfirm}
           >
-            <Text style={styles.submitButtonText}>Zum Warenkorb hinzufügen</Text>
+            <Text style={styles.submitButtonText}>
+              {editing ? 'Änderungen übernehmen' : 'Zum Warenkorb hinzufügen'}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
             <Text style={styles.modalCancelText}>Abbrechen</Text>
@@ -1072,14 +1224,24 @@ function PriceNumpadDialog({
 }
 
 // Kombinierter Dialog für Items mit variant_options (Pflichtauswahl, z.B. Rind/Huhn)
-// und/oder extra_options (optionale Extras mit +/- Menge, z.B. bei Ajitama-Ramen).
+// und/oder extra_options (optionale Extras mit +/- Menge, z.B. bei Ajitama-Ramen). Auch
+// für das Bearbeiten einer bereits im Warenkorb liegenden Zeile wiederverwendet (siehe
+// editing/initialVariantDe/initialExtras in OrderScreen) — z.B. wenn beim Ramen noch
+// last-minute ein Extra dazu soll, bevor die Bestellung abgeschickt ist; startet dann mit
+// der aktuellen Auswahl der Zeile vorausgefüllt statt leer.
 function ItemOptionsDialog({
   item,
+  initialVariantDe = null,
+  initialExtras = [],
+  editing = false,
   onConfirm,
   onCancel,
   styles,
 }: {
   item: MenuItem | null;
+  initialVariantDe?: string | null;
+  initialExtras?: CartExtra[];
+  editing?: boolean;
   onConfirm: (variant: VariantOption | null, extras: CartExtra[]) => void;
   onCancel: () => void;
   styles: OrderStyles;
@@ -1087,13 +1249,17 @@ function ItemOptionsDialog({
   const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null);
   const [extraQuantities, setExtraQuantities] = useState<Record<string, number>>({});
 
-  // Bei jedem neu geöffneten Item die lokale Auswahl zurücksetzen.
+  // Bei jedem neu geöffneten Item die lokale Auswahl zurücksetzen — auf initialVariantDe/
+  // initialExtras beim Bearbeiten, sonst leer (siehe Kommentar oben).
   const itemId = item?.id ?? null;
   const [resetForItemId, setResetForItemId] = useState<string | null>(null);
   if (itemId !== resetForItemId) {
     setResetForItemId(itemId);
-    setSelectedVariant(null);
-    setExtraQuantities({});
+    const variantOptions = item?.variant_options ?? [];
+    setSelectedVariant(variantOptions.find((v) => v.name_de === initialVariantDe) ?? null);
+    const quantities: Record<string, number> = {};
+    for (const extra of initialExtras) quantities[extra.nameDe] = extra.quantity;
+    setExtraQuantities(quantities);
   }
 
   if (!item) return null;
@@ -1192,7 +1358,9 @@ function ItemOptionsDialog({
             onPress={handleConfirm}
             disabled={!canConfirm}
           >
-            <Text style={styles.submitButtonText}>Zum Warenkorb hinzufügen</Text>
+            <Text style={styles.submitButtonText}>
+              {editing ? 'Änderungen übernehmen' : 'Zum Warenkorb hinzufügen'}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
             <Text style={styles.modalCancelText}>Abbrechen</Text>
@@ -1345,6 +1513,11 @@ const createStyles = (colors: ThemeColors) =>
     },
     noteFieldText: { fontSize: 13, color: colors.text },
     noteFieldPlaceholder: { fontSize: 13, color: colors.textFaint },
+    // Stift-Button zum nachträglichen Ändern von Variante/Extras/Beschreibung einer
+    // Warenkorb-Zeile (siehe handleEditCartLine) — nur sichtbar bei Items, die überhaupt
+    // einen Dialog haben (isEditableMenuItem).
+    cartLineEditButton: { paddingHorizontal: 8 },
+    cartLineEditButtonText: { fontSize: 17, color: colors.textSecondary },
     removeText: { fontSize: 20, color: colors.danger, paddingHorizontal: 12 },
     customEntryInput: {
       fontSize: 16,

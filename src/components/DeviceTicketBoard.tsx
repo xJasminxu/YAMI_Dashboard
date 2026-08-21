@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useDeviceOrders, type GroupedOrder } from '../hooks/useDeviceOrders';
+import { useDeviceOrders, type DeviceOrderItem, type GroupedOrder } from '../hooks/useDeviceOrders';
 import { useNewOrderChime } from '../hooks/useNewOrderChime';
-import type { KitchenStation, OrderItemStatus, TargetDevice } from '../types/database';
+import type { OrderItemStatus, TargetDevice } from '../types/database';
 import type { ThemeColors } from '../theme/colors';
 import { useTheme } from '../theme/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
@@ -44,20 +44,22 @@ function cardBackgroundFor(colors: ThemeColors): Record<OrderProgress, object> {
   };
 }
 
-// Reduziert jede Bestellung auf die Positionen, die zu einer der übergebenen Küchen-
-// Stationen gehören (categories.kitchen_station) — Bestellungen ohne passende Position
-// fallen ganz raus. So zeigt jede Spalte der Zwei-Spalten-Ansicht nur ihre eigenen
-// Karten (mit eigenem Fortschritt/Farbe), statt dass eine große Hauptspeise-Bestellung
-// die Vorspeisen einer neu eingegangenen Bestellung unter sich begräbt.
-function itemsForStations(orders: GroupedOrder[], stations: KitchenStation[]): GroupedOrder[] {
+// Reduziert jede Bestellung auf die Positionen, die zum Prädikat passen — Küche trennt
+// so Vorspeise von Hauptspeise/Barbecue (categories.kitchen_station), Bar trennt Getränke
+// von Nachspeisen (categories.menu_group), siehe showTwoColumns unten. Bestellungen ohne
+// passende Position fallen ganz raus. So zeigt jede Spalte der Zwei-Spalten-Ansicht nur
+// ihre eigenen Karten (mit eigenem Fortschritt/Farbe), statt dass eine große laufende
+// Bestellung neu eingegangene Positionen der jeweils anderen Spalte unter sich begräbt.
+// Eine Karte fällt aus ihrer Spalte raus, sobald alle Positionen DIESER Spalte abgehakt
+// sind — unabhängig davon, ob die Bestellung insgesamt (in der jeweils anderen Spalte)
+// noch offen ist.
+function itemsMatching(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
   return orders
     .map((order) => ({
       ...order,
-      items: order.items.filter((item) =>
-        stations.includes(item.menu_item.category.kitchen_station ?? 'hauptspeise')
-      ),
+      items: order.items.filter(predicate),
     }))
-    .filter((order) => order.items.length > 0);
+    .filter((order) => order.items.some((item) => item.status === 'offen'));
 }
 
 // Zeitpunkt, an dem die letzte Position der Bestellung fertig markiert wurde — bestimmt
@@ -141,18 +143,43 @@ export default function DeviceTicketBoard({
     return { open, done };
   }, [orders]);
 
-  // Die Vorspeise/Hauptspeise-Spaltenaufteilung ist nur für die Küche sinnvoll (die Bar
-  // hat keine kitchen_station-Werte) und nur für den "Offen"-Tab — die "Fertig"-Historie
-  // bleibt eine einfache Liste, da dort keine Eile mehr besteht.
-  const showStationColumns = targetDevice === 'kitchen' && tab === 'offen';
+  // Zwei-Spalten-Ansicht nur für den "Offen"-Tab — die "Fertig"-Historie bleibt eine
+  // einfache Liste, da dort keine Eile mehr besteht. Küche trennt Vorspeise von
+  // Hauptspeise/Barbecue, Bar trennt Getränke von Nachspeisen (siehe itemsMatching).
+  const showTwoColumns = tab === 'offen';
 
-  const { vorspeiseOrders, mainsOrders } = useMemo(() => {
-    if (!showStationColumns) return { vorspeiseOrders: [] as GroupedOrder[], mainsOrders: [] as GroupedOrder[] };
-    return {
-      vorspeiseOrders: itemsForStations(open, ['vorspeise']),
-      mainsOrders: itemsForStations(open, ['hauptspeise', 'barbecue']),
-    };
-  }, [open, showStationColumns]);
+  const { primaryOrders, primaryTitle, primaryEmptyText, secondaryOrders, secondaryTitle, secondaryEmptyText } =
+    useMemo(() => {
+      const empty = {
+        primaryOrders: [] as GroupedOrder[],
+        primaryTitle: '',
+        primaryEmptyText: '',
+        secondaryOrders: [] as GroupedOrder[],
+        secondaryTitle: '',
+        secondaryEmptyText: '',
+      };
+      if (!showTwoColumns) return empty;
+
+      if (targetDevice === 'kitchen') {
+        return {
+          primaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise'),
+          primaryTitle: 'Vorspeise',
+          primaryEmptyText: 'Keine offenen Vorspeisen.',
+          secondaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') !== 'vorspeise'),
+          secondaryTitle: 'Hauptspeise & Barbecue',
+          secondaryEmptyText: 'Keine offenen Hauptspeisen.',
+        };
+      }
+
+      return {
+        primaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'getraenke'),
+        primaryTitle: 'Getränke',
+        primaryEmptyText: 'Keine offenen Getränke.',
+        secondaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'nachspeisen'),
+        secondaryTitle: 'Nachspeisen',
+        secondaryEmptyText: 'Keine offenen Nachspeisen.',
+      };
+    }, [open, showTwoColumns, targetDevice]);
 
   const visibleOrders = tab === 'offen' ? open : done;
 
@@ -198,42 +225,47 @@ export default function DeviceTicketBoard({
 
       {tab === 'offen' && open.length === 0 ? (
         <EmptyBoardBanner large={large} styles={styles} />
-      ) : showStationColumns ? (
+      ) : showTwoColumns ? (
         <View style={styles.stationRow}>
           <View style={styles.stationColumn}>
-            <StationHeader title="Vorspeise" openCount={countOpenItems(vorspeiseOrders)} large={large} styles={styles} />
+            <StationHeader title={primaryTitle} openCount={countOpenItems(primaryOrders)} large={large} styles={styles} />
             <TicketList
-              orders={vorspeiseOrders}
+              orders={primaryOrders}
               large={large}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
               onCompleteOrder={completeOrder}
               allowComplete
-              emptyText="Keine offenen Vorspeisen."
+              emptyText={primaryEmptyText}
+              columns={2}
             />
           </View>
           <View style={styles.stationDivider} />
           <View style={styles.stationColumn}>
             <StationHeader
-              title="Hauptspeise & Barbecue"
-              openCount={countOpenItems(mainsOrders)}
+              title={secondaryTitle}
+              openCount={countOpenItems(secondaryOrders)}
               large={large}
               styles={styles}
             />
             <TicketList
-              orders={mainsOrders}
+              orders={secondaryOrders}
               large={large}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
               onCompleteOrder={completeOrder}
               allowComplete
-              emptyText="Keine offenen Hauptspeisen."
+              emptyText={secondaryEmptyText}
+              columns={2}
             />
           </View>
         </View>
       ) : (
+        // Dieser Zweig läuft nur, wenn showTwoColumns false ist, also tab==='fertig' —
+        // die "Offen"-Ansicht rendert immer über den showTwoColumns-Zweig oben (bei beiden
+        // Geräten, siehe showTwoColumns).
         <TicketList
           orders={visibleOrders}
           large={large}
@@ -241,8 +273,7 @@ export default function DeviceTicketBoard({
           cardBackground={cardBackground}
           onToggleItem={setItemStatus}
           onCompleteOrder={completeOrder}
-          allowComplete={tab === 'offen'}
-          emptyText={tab === 'offen' ? 'Keine offenen Bestellungen.' : 'Noch keine erledigten Bestellungen.'}
+          emptyText="Noch keine erledigten Bestellungen."
         />
       )}
     </View>
@@ -251,9 +282,9 @@ export default function DeviceTicketBoard({
 
 // Ersetzt die Ticket-Liste komplett, solange im "Offen"-Tab nichts ansteht (statt nur
 // eines schlichten ListEmptyComponent-Texts wie sonst) — ein kleiner Spaß für die Küche/
-// Bar in ruhigen Momenten. Bei der Küche mit ihrer Zwei-Spalten-Ansicht gilt das für beide
-// Spalten gleichzeitig (dieselbe `open`-Liste speist beide), deshalb einmal über dem
-// ganzen Board statt einmal pro Spalte.
+// Bar in ruhigen Momenten. Bei der Zwei-Spalten-Ansicht gilt das für beide Spalten
+// gleichzeitig (dieselbe `open`-Liste speist beide), deshalb einmal über dem ganzen Board
+// statt einmal pro Spalte.
 function EmptyBoardBanner({ large, styles }: { large: boolean; styles: BoardStyles }) {
   return (
     <View style={styles.emptyBanner}>
@@ -289,8 +320,9 @@ function StationHeader({
 }
 
 // Eine Spalte Bestellkarten — dieselbe Karten-Darstellung wird sowohl für die normale
-// Einzel-Liste (Bar, Küchen-"Fertig"-Tab) als auch für jede der beiden Küchen-Stations-
-// Spalten verwendet, damit Kartenlayout/-verhalten überall identisch bleiben.
+// Einzel-Liste (der "Fertig"-Tab beider Geräte) als auch für jede der beiden Spalten der
+// "Offen"-Zwei-Spalten-Ansicht verwendet, damit Kartenlayout/-verhalten überall identisch
+// bleiben.
 function TicketList({
   orders,
   large,
@@ -300,6 +332,7 @@ function TicketList({
   onCompleteOrder,
   allowComplete = false,
   emptyText,
+  columns = 1,
 }: {
   orders: GroupedOrder[];
   large: boolean;
@@ -309,11 +342,17 @@ function TicketList({
   onCompleteOrder?: (order: GroupedOrder) => void;
   allowComplete?: boolean;
   emptyText: string;
+  // 2 für die Vorspeise-/Hauptspeise-Spalten (siehe DeviceTicketBoard) — zwei Karten
+  // nebeneinander statt einer einzelnen Spalte, damit auf einen Blick mehr offene
+  // Tickets sichtbar sind, ohne scrollen zu müssen.
+  columns?: number;
 }) {
   return (
     <FlatList
       data={orders}
       keyExtractor={(order) => order.orderId}
+      numColumns={columns}
+      columnWrapperStyle={columns > 1 ? styles.cardRow : undefined}
       contentContainerStyle={[styles.listContent, large && styles.listContentLarge]}
       renderItem={({ item: order }) => {
         const card = (
@@ -366,11 +405,28 @@ function TicketList({
                 </Text>
               )}
               {item.extras && item.extras.length > 0 && (
-                <Text
-                  style={[styles.itemExtras, large && styles.itemExtrasLarge, item.status === 'fertig' && styles.itemDone]}
+                // Eigene auffällige Sprechblase statt nur kursivem Text — Extras (z.B.
+                // Ajitama-Ei/Mais bei Ramen) wurden von der Küche regelmäßig übersehen, wenn
+                // sie nur als kleine Textzeile zwischen Gericht und Notiz stand. Fester
+                // Amber-Ton (nicht colors.warning) + Icon, damit sie unabhängig von Hell-/
+                // Dunkelmodus und auch beim flüchtigen Blick auf die Karte sofort auffällt.
+                <View
+                  style={[
+                    styles.itemExtrasBadge,
+                    large && styles.itemExtrasBadgeLarge,
+                    item.status === 'fertig' && styles.itemExtrasBadgeDone,
+                  ]}
                 >
-                  {item.extras.map((e) => `+${e.quantity} ${e.name_hanzi} (${e.name_de})`).join(', ')}
-                </Text>
+                  <Text
+                    style={[
+                      styles.itemExtrasText,
+                      large && styles.itemExtrasTextLarge,
+                      item.status === 'fertig' && styles.itemExtrasTextDone,
+                    ]}
+                  >
+                    ➕ {item.extras.map((e) => `${e.quantity} ${e.name_hanzi} (${e.name_de})`).join(', ')}
+                  </Text>
+                </View>
               )}
               {item.note && (
                 <Text
@@ -384,7 +440,12 @@ function TicketList({
           </View>
         );
 
-        if (!allowComplete) return card;
+        // In der Zwei-Spalten-Kartenansicht (columns=2) braucht der eigentliche Grid-
+        // Slot — egal ob rohe Karte oder Swipeable-Wrapper — flex:1, sonst füllt die Karte
+        // nicht die ihr per columnWrapperStyle zugewiesene Spaltenbreite aus.
+        if (!allowComplete) {
+          return columns > 1 ? <View style={styles.cardInRow}>{card}</View> : card;
+        }
 
         // Wisch-Geste als zweiter Weg (neben dem X-Button oben), eine ganze Karte auf
         // einmal abzuhaken — z.B. wenn eine Hand gerade an Töpfen/Tellern beschäftigt
@@ -393,7 +454,7 @@ function TicketList({
         // wird (der Inhalt rutscht dabei nach links, das Feld erscheint von rechts).
         // onSwipeableOpen löst direkt beim vollständigen Öffnen aus, ohne dass zusätzlich
         // noch auf das Aktionsfeld getippt werden müsste — ein durchgezogener Wisch reicht.
-        return (
+        const swipeable = (
           <Swipeable
             renderRightActions={() => (
               <View style={[styles.swipeCompleteAction, large && styles.swipeCompleteActionLarge]}>
@@ -411,6 +472,8 @@ function TicketList({
             {card}
           </Swipeable>
         );
+
+        return columns > 1 ? <View style={styles.cardInRow}>{swipeable}</View> : swipeable;
       }}
       ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
     />
@@ -463,9 +526,10 @@ const createStyles = (colors: ThemeColors) =>
     emptyBannerTextLarge: { fontSize: 78 },
     emptyBannerImage: { width: 420, aspectRatio: 3 / 4 },
     emptyBannerImageLarge: { width: 280 },
-    // Zwei-Spalten-Ansicht für die Küche (Vorspeise | Hauptspeise+Barbecue), jede
-    // Spalte unabhängig scrollbar, damit eine große Hauptspeise-Bestellung nicht mehr
-    // die Vorspeisen einer neuen Bestellung von der Küche wegscrollt.
+    // Zwei-Spalten-Ansicht im "Offen"-Tab (Küche: Vorspeise | Hauptspeise+Barbecue, Bar:
+    // Getränke | Nachspeisen), jede Spalte unabhängig scrollbar, damit eine große laufende
+    // Bestellung nicht mehr die neu eingegangenen Positionen der jeweils anderen Spalte
+    // wegscrollt.
     stationRow: { flex: 1, flexDirection: 'row' },
     stationColumn: { flex: 1 },
     stationDivider: { width: 1, backgroundColor: colors.border },
@@ -482,6 +546,11 @@ const createStyles = (colors: ThemeColors) =>
     stationHeaderCountLarge: { fontSize: 16 },
     listContent: { padding: 12, gap: 12 },
     listContentLarge: { gap: 16 },
+    // Zwei-Spalten-Kartenraster innerhalb von Vorspeise/Hauptspeise (siehe
+    // TicketList columns-Prop) — mehr Tickets gleichzeitig sichtbar statt einer
+    // einzelnen, tief scrollenden Spalte.
+    cardRow: { gap: 12 },
+    cardInRow: { flex: 1 },
     card: {
       borderRadius: 12,
       padding: 14,
@@ -536,8 +605,21 @@ const createStyles = (colors: ThemeColors) =>
     itemHanziLarge: { fontSize: 28 },
     itemDe: { fontSize: 13, color: colors.textMuted },
     itemDeLarge: { fontSize: 19 },
-    itemExtras: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontStyle: 'italic' },
-    itemExtrasLarge: { fontSize: 17, marginTop: 4 },
+    // Fest verdrahteter Amber-Ton statt colors.warning — soll unabhängig vom Theme gleich
+    // knallig bleiben, damit Extras nirgends im Dunkelmodus verwaschen wirken.
+    itemExtrasBadge: {
+      alignSelf: 'flex-start',
+      marginTop: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+      backgroundColor: '#f59e0b',
+    },
+    itemExtrasBadgeLarge: { marginTop: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+    itemExtrasBadgeDone: { opacity: 0.5 },
+    itemExtrasText: { fontSize: 14, fontWeight: '800', color: '#1c1c1e' },
+    itemExtrasTextLarge: { fontSize: 19 },
+    itemExtrasTextDone: { textDecorationLine: 'line-through' },
     itemNote: { fontSize: 12, color: colors.warning, marginTop: 2, fontWeight: '700' },
     itemNoteLarge: { fontSize: 17, marginTop: 4 },
     itemDone: { textDecorationLine: 'line-through', color: colors.textFaint },
