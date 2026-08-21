@@ -1,9 +1,22 @@
 import { useMemo, useState } from 'react';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ActivityIndicator, FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
+import { formatDateTime } from '../../lib/datetime';
+import { itemTotal, formatPrice } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
 import type { RootStackParamList } from '../../navigation/types';
 import type { PaymentMethod } from '../../types/database';
@@ -11,22 +24,6 @@ import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TableBilling'>;
-
-function formatPrice(amount: number) {
-  return `${amount.toFixed(2).replace('.', ',')} €`;
-}
-
-// Preis einer einzelnen Position: Preis-Snapshot vom Bestellzeitpunkt
-// (unit_price/extras[].price), mit Fallback auf den aktuellen menu_items.price
-// für ältere Bestellungen, die vor Einführung des Snapshots angelegt wurden.
-function itemTotal(item: DeviceOrderItem): number | null {
-  const base = item.unit_price ?? item.menu_item.price ?? null;
-  const extras = item.extras ?? [];
-  const extrasSum = extras.reduce((sum, e) => sum + (e.price ?? 0) * e.quantity, 0);
-  const hasAnyPrice = base !== null || extras.some((e) => e.price !== null && e.price !== undefined);
-  if (!hasAnyPrice) return null;
-  return (base ?? 0) + extrasSum;
-}
 
 // Bestellübersicht mit vorläufiger Abrechnung: Bedienung kann einzelne
 // Positionen auswählen (z.B. für getrennte Rechnungen) und sieht die Summe
@@ -59,6 +56,14 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const [removeItem, setRemoveItem] = useState<DeviceOrderItem | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  // Tisch-Notiz (tables.note, siehe schema.sql) — dieselbe Notiz, die auch in
+  // TableOverviewScreen.tsx angezeigt/editiert wird, hier zusätzlich direkt in der
+  // Bestellübersicht sichtbar/editierbar, damit die Bedienung nicht zurück zur
+  // Tischübersicht muss, um sie zu lesen oder zu ändern.
+  const [noteEditOpen, setNoteEditOpen] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   const tableOrders = useMemo(
     () =>
@@ -70,6 +75,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   // Für "Tisch abschließen" gebraucht — anders als die restliche Seite ist das
   // ein echter Schreibzugriff (update auf orders.closed_at).
   const tableId = tableOrders[0]?.table.id ?? null;
+  const tableNote = tableOrders[0]?.table.note ?? null;
 
   const items = useMemo(
     () => tableOrders.flatMap((order) => order.items).sort((a, b) => a.menu_item.category.sort_order - b.menu_item.category.sort_order),
@@ -144,6 +150,42 @@ export default function TableBillingScreen({ route, navigation }: Props) {
     }
 
     setRemoveItem(null);
+  }
+
+  function openNoteEditor() {
+    setNoteError(null);
+    setNoteText(tableNote ?? '');
+    setNoteEditOpen(true);
+  }
+
+  function cancelNoteEdit() {
+    setNoteEditOpen(false);
+    setNoteError(null);
+  }
+
+  // Wie in TableOverviewScreen.tsx: schreibt direkt auf tables.note (leerer Text → null).
+  // Läuft über dieselbe Realtime-Subscription auf "tables" (siehe useDeviceOrders), die
+  // Tischübersicht sieht die Änderung also ebenfalls sofort.
+  async function saveNote() {
+    if (!tableId) return;
+
+    setSavingNote(true);
+    setNoteError(null);
+
+    const trimmed = noteText.trim();
+    const { error } = await supabase
+      .from('tables')
+      .update({ note: trimmed.length > 0 ? trimmed : null })
+      .eq('id', tableId);
+
+    setSavingNote(false);
+
+    if (error) {
+      setNoteError(error.message);
+      return;
+    }
+
+    setNoteEditOpen(false);
   }
 
   function toggle(id: string) {
@@ -242,6 +284,15 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         </Text>
         <Text style={styles.grandTotal}>Gesamt: {formatPrice(grandTotal)}</Text>
       </View>
+      <TouchableOpacity style={styles.noteRow} onPress={openNoteEditor} disabled={!tableId}>
+        {tableNote ? (
+          <Text style={styles.noteText} numberOfLines={2}>
+            📝 {tableNote}
+          </Text>
+        ) : (
+          <Text style={styles.noteAddText}>+ Notiz</Text>
+        )}
+      </TouchableOpacity>
       {paidItems.length > 0 && (
         <View style={styles.paidSummaryRow}>
           <View>
@@ -312,6 +363,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
                   </Text>
                 )}
                 {item.note && <Text style={[styles.itemNote, paid && styles.itemDone]}>Notiz: {item.note}</Text>}
+                <Text style={[styles.itemTimestamp, paid && styles.itemDone]}>{formatDateTime(item.created_at)}</Text>
               </View>
               <Text style={[styles.itemPrice, paid && styles.itemDone]}>{total !== null ? formatPrice(total) : '–'}</Text>
               <TouchableOpacity
@@ -478,6 +530,37 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={noteEditOpen} transparent animationType="fade" onRequestClose={cancelNoteEdit}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Notiz zu Tisch {tableNumber}</Text>
+            <TextInput
+              style={styles.noteInput}
+              value={noteText}
+              onChangeText={setNoteText}
+              placeholder="z.B. wartet auf Rechnung, Allergie Erdnuss ..."
+              placeholderTextColor={styles.noteInputPlaceholder.color as string}
+              multiline
+              autoFocus
+            />
+            {noteError && <Text style={styles.errorText}>{noteError}</Text>}
+            <TouchableOpacity
+              style={[styles.paymentMethodButton, savingNote && styles.confirmButtonDisabled]}
+              onPress={saveNote}
+              disabled={savingNote}
+            >
+              {savingNote ? <ActivityIndicator color="#fff" /> : <Text style={styles.paymentMethodButtonText}>Speichern</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelNoteEdit} disabled={savingNote}>
+              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -496,6 +579,23 @@ const createStyles = (colors: ThemeColors) =>
     },
     title: { fontSize: 22, fontWeight: '700', color: colors.text },
     grandTotal: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
+    // Tisch-Notiz-Zeile (tables.note) direkt unter dem Titel — dieselbe Notiz wie in
+    // TableOverviewScreen.tsx, hier zusätzlich antippbar zum Lesen/Editieren.
+    noteRow: { paddingHorizontal: 16, paddingTop: 6 },
+    noteText: { fontSize: 13, color: colors.textSecondary, fontStyle: 'italic' },
+    noteAddText: { fontSize: 13, color: colors.primary, fontWeight: '600' },
+    noteInput: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 10,
+      padding: 12,
+      minHeight: 80,
+      fontSize: 15,
+      color: colors.text,
+      textAlignVertical: 'top',
+      marginBottom: 16,
+    },
+    noteInputPlaceholder: { color: colors.textFaint },
     paidSummaryRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -561,6 +661,7 @@ const createStyles = (colors: ThemeColors) =>
     itemDe: { fontSize: 12, color: colors.textMuted },
     itemExtras: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontStyle: 'italic' },
     itemNote: { fontSize: 12, color: colors.warning, marginTop: 2, fontWeight: '700' },
+    itemTimestamp: { fontSize: 11, color: colors.textFaint, marginTop: 2 },
     itemDone: { color: colors.textFaint },
     itemPrice: { fontSize: 15, fontWeight: '700', color: colors.text },
     // X-Button zum Entfernen einer einzelnen Position (siehe requestRemoveItem) — bewusst

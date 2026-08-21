@@ -99,6 +99,17 @@ create table if not exists tables (
   number int not null unique
 );
 
+-- Migration: note-Spalte (nachträglich hinzugefügt). Freitext-Notiz zu einem Tisch
+-- (z.B. "wartet auf Rechnung", "Allergie Erdnuss", "reserviert bis 22 Uhr") — anders als
+-- order_items.note (Notiz zu einer einzelnen Bestellposition) hängt diese am Tisch selbst,
+-- editierbar direkt in TableOverviewScreen.tsx (Tischübersicht). Bewusst NICHT an eine
+-- bestimmte orders-Zeile gebunden, weil ein Tisch über den Abend hinweg mehrere
+-- Bestellrunden haben kann (Nachbestellung) — die Notiz soll unabhängig davon bestehen
+-- bleiben. Wird nicht automatisch geleert (auch nicht bei "Tisch abschließen" oder
+-- Tagesabschluss) — die Bedienung löscht/ändert sie manuell, sobald sie nicht mehr
+-- zutrifft, genau wie die Tischnummer selbst über den Tagesabschluss hinweg bestehen bleibt.
+alter table tables add column if not exists note text;
+
 -- ---------------------------------------------------------------------------
 -- orders
 -- Eine "Bestellrunde" für einen Tisch. Mehrere Bestellungen pro Tisch über den
@@ -188,6 +199,16 @@ begin
     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'orders'
   ) then
     alter publication supabase_realtime add table orders;
+  end if;
+
+  -- Für Live-Updates von Tisch-Notizen (tables.note, siehe TableOverviewScreen.tsx) auf
+  -- allen offenen Küche/Bar/Status/Tischübersicht-Bildschirmen, ohne auf den nächsten
+  -- ohnehin fälligen Refetch warten zu müssen.
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'tables'
+  ) then
+    alter publication supabase_realtime add table tables;
   end if;
 end $$;
 

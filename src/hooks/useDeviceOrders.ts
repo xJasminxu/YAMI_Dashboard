@@ -50,7 +50,7 @@ export function useDeviceOrders(targetDevice: TargetDevice, options: UseDeviceOr
       .select(
         `
         id, order_id, menu_item_id, status, variant_hanzi, variant_de, extras, unit_price, note, created_at, done_at, paid_method,
-        order:orders!inner(id, table_id, created_at, closed_at, table:tables(id, number)),
+        order:orders!inner(id, table_id, created_at, closed_at, table:tables(id, number, note)),
         menu_item:menu_items!inner(
           id, category_id, name_hanzi, name_de, item_code, active, price, created_at,
           category:categories!inner(id, name_hanzi, name_de, menu_group, target_device, sort_order, kitchen_station, is_discount, created_at)
@@ -92,16 +92,21 @@ export function useDeviceOrders(targetDevice: TargetDevice, options: UseDeviceOr
     setLoading(true);
     fetchOrders();
 
-    // Auf "orders" mit abonnieren, nicht nur "order_items": "Tisch abschließen" setzt
-    // orders.closed_at per UPDATE, ohne order_items anzufassen — ohne diesen zweiten
-    // Listener würden andere offene Küche/Bar/Status-Bildschirme das Verschwinden des
-    // Tisches erst beim nächsten ohnehin fälligen Refetch mitbekommen, nicht sofort.
+    // Auf "orders" und "tables" mit abonnieren, nicht nur "order_items": "Tisch
+    // abschließen" setzt orders.closed_at per UPDATE, eine Tisch-Notiz (siehe
+    // TableOverviewScreen.tsx) landet direkt auf tables.note — beides ohne order_items
+    // anzufassen. Ohne diese zusätzlichen Listener würden andere offene Küche/Bar/Status-
+    // Bildschirme solche Änderungen erst beim nächsten ohnehin fälligen Refetch
+    // mitbekommen, nicht sofort.
     const channel = supabase
       .channel(`order_items:${targetDevice}:${instanceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
         fetchOrders();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchOrders();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, () => {
         fetchOrders();
       })
       .subscribe();

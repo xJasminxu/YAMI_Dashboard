@@ -62,6 +62,9 @@ export interface MenuItem {
 export interface RestaurantTable {
   id: string;
   number: number;
+  // Freitext-Notiz zum Tisch (z.B. "wartet auf Rechnung", "Allergie Erdnuss"), editierbar
+  // in TableOverviewScreen.tsx — unabhängig von einzelnen Bestellrunden, siehe schema.sql.
+  note: string | null;
 }
 
 export interface Order {
