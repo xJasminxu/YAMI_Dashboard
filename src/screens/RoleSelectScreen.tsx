@@ -1,7 +1,19 @@
 import { useState } from 'react';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ActivityIndicator, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { DEVICE_ROLES, type DeviceRole } from '../types/role';
+import { ADMIN_PIN } from '../lib/adminPin';
 import { supabase } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation/types';
 import type { ThemeColors } from '../theme/colors';
@@ -32,10 +44,28 @@ function navigateToRole(navigation: Props['navigation'], role: DeviceRole) {
 export default function RoleSelectScreen({ navigation }: Props) {
   const styles = useThemedStyles(createStyles);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pinText, setPinText] = useState('');
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
 
+  function openTagesabschlussDialog() {
+    setPinText('');
+    setCloseError(null);
+    setConfirmOpen(true);
+  }
+
+  function cancelTagesabschluss() {
+    setConfirmOpen(false);
+    setPinText('');
+    setCloseError(null);
+  }
+
   async function handleTagesabschluss() {
+    if (pinText !== ADMIN_PIN) {
+      setCloseError('Falsche PIN.');
+      return;
+    }
+
     setClosing(true);
     setCloseError(null);
 
@@ -52,6 +82,7 @@ export default function RoleSelectScreen({ navigation }: Props) {
     }
 
     setConfirmOpen(false);
+    setPinText('');
   }
 
   return (
@@ -65,18 +96,12 @@ export default function RoleSelectScreen({ navigation }: Props) {
         </TouchableOpacity>
       ))}
 
-      <TouchableOpacity
-        style={styles.dayCloseButton}
-        onPress={() => {
-          setCloseError(null);
-          setConfirmOpen(true);
-        }}
-      >
+      <TouchableOpacity style={styles.dayCloseButton} onPress={openTagesabschlussDialog}>
         <Text style={styles.dayCloseButtonText}>Tagesabschluss</Text>
       </TouchableOpacity>
 
-      <Modal visible={confirmOpen} transparent animationType="fade" onRequestClose={() => setConfirmOpen(false)}>
-        <View style={styles.modalOverlay}>
+      <Modal visible={confirmOpen} transparent animationType="fade" onRequestClose={cancelTagesabschluss}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Tagesabschluss durchführen?</Text>
             <Text style={styles.modalBody}>
@@ -84,11 +109,22 @@ export default function RoleSelectScreen({ navigation }: Props) {
               angefangen wird. Speisekarte und Tische bleiben erhalten. 将所有未完成和已完成的订单永久删除，以便明天从零
               开始。菜单和餐桌信息将保留。
             </Text>
+            <TextInput
+              style={styles.pinInput}
+              value={pinText}
+              onChangeText={setPinText}
+              placeholder="PIN"
+              placeholderTextColor={styles.pinInputPlaceholder.color as string}
+              keyboardType="number-pad"
+              secureTextEntry
+              maxLength={4}
+              autoFocus
+            />
             {closeError && <Text style={styles.errorText}>{closeError}</Text>}
             <TouchableOpacity
-              style={[styles.confirmButton, closing && styles.confirmButtonDisabled]}
+              style={[styles.confirmButton, (closing || !pinText) && styles.confirmButtonDisabled]}
               onPress={handleTagesabschluss}
-              disabled={closing}
+              disabled={closing || !pinText}
             >
               {closing ? (
                 <ActivityIndicator color="#fff" />
@@ -96,11 +132,11 @@ export default function RoleSelectScreen({ navigation }: Props) {
                 <Text style={styles.confirmButtonText}>Ja, alle Bestellungen löschen</Text>
               )}
             </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmOpen(false)} disabled={closing}>
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelTagesabschluss} disabled={closing}>
               <Text style={styles.cancelButtonText}>Abbrechen</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -183,6 +219,18 @@ const createStyles = (colors: ThemeColors) =>
       lineHeight: 20,
     },
     errorText: { color: colors.danger, textAlign: 'center', marginBottom: 12 },
+    pinInput: {
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 12,
+      fontSize: 16,
+      color: colors.text,
+      textAlign: 'center',
+    },
+    pinInputPlaceholder: { color: colors.textFaint },
     confirmButton: {
       backgroundColor: '#b91c1c',
       borderRadius: 10,

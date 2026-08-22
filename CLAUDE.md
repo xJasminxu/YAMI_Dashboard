@@ -35,15 +35,18 @@ Rolle des Geräts:
 
 1. **Bestellung** (Bedienung nimmt auf) — Kategorien als Buttons, Warenkorb, Tisch wählen,
    Bestellung abschicken.
-2. **Küche** — zeigt nur Items mit `target_device = 'kitchen'`. Der "Offen"-Tab ist in zwei
-   unabhängig scrollbare Spalten aufgeteilt (Vorspeise | Hauptspeise & Barbecue, siehe
-   `categories.kitchen_station`), damit eine große laufende Bestellung nicht die Vorspeisen
-   einer neu eingegangenen Bestellung unter sich verschwinden lässt. Die "Fertig"-Historie
-   bleibt eine einfache Liste.
-3. **Bar** — zeigt nur Items mit `target_device = 'bar'`. Der "Offen"-Tab ist ebenso in
-   zwei unabhängig scrollbare Spalten aufgeteilt (Getränke | Nachspeisen, siehe
-   `categories.menu_group`), aus demselben Grund wie bei der Küche. Die "Fertig"-Historie
-   bleibt eine einfache Liste.
+2. **Küche** — zeigt nur Items mit `target_device = 'kitchen'`. Der "Offen"-Tab ist in drei
+   unabhängig scrollbare Spalten aufgeteilt (Vorspeise | Hauptspeise | Barbecue, siehe
+   `categories.kitchen_station`), damit eine große laufende Bestellung nicht die Positionen
+   einer anderen Spalte unter sich verschwinden lässt. Hauptspeise (Ramen, Nudeln,
+   Reisgerichte, Suppen) ist davon die breiteste Spalte, da dort die meisten Bestellungen
+   zusammenlaufen. Die "Fertig"-Historie bleibt eine einfache Liste.
+3. **Bar** — zeigt nur Items mit `target_device = 'bar'`. Statt eines umschaltbaren
+   "Fertig"-Tabs stehen hier immer drei Spalten nebeneinander: Getränke | Nachspeisen |
+   Vergangene Bestellungen (siehe `categories.menu_group`), aus demselben
+   Grund wie bei der Küche — plus die Historie immer sichtbar, damit man nicht extra
+   umschalten muss. Getränke ist die breiteste Spalte, Vergangene Bestellungen die
+   schmalste.
 4. **Status** (optional, für Bedienungen) — Übersicht aller **offenen** Tische mit
    Fortschritt (z.B. "Tisch 4: 2/5 fertig"), gespeist aus denselben Realtime-Daten wie
    Küche/Bar.
@@ -103,32 +106,37 @@ und tragen zusätzlich Name auf Hanzi (primär) und Deutsch (sekundär).
 Sortierung ist rein `sort_order`-Feld auf der `categories`-Tabelle, client-seitig angewendet.
 Kein Backend-Logik nötig.
 
-## Zwei-Spalten-Ansicht im "Offen"-Tab (Küche: Stationen, Bar: Getränke/Nachspeisen)
+## Mehr-Spalten-Ansicht im "Offen"-Tab (Küche: Stationen, Bar: Getränke/Nachspeisen)
 
 Unabhängig von `sort_order` (das nur die Reihenfolge *innerhalb* einer Ticket-Karte
 bestimmt) hat jede Küchen-Kategorie zusätzlich ein `kitchen_station`-Feld
 (`vorspeise` | `hauptspeise` | `barbecue`), das dieselbe Vorspeise/Hauptspeise/Barbecue-
 Gruppierung wie oben abbildet. `DeviceTicketBoard.tsx` nutzt es, um im "Offen"-Tab der
-Küche zwei separate Spalten zu rendern (Vorspeise links, Hauptspeise+Barbecue rechts),
-jede mit eigenen Ticket-Karten und eigenem Fortschritt (eine Bestellung kann in der
-Vorspeise-Spalte schon grün sein, während ihre Hauptspeise-Karte noch offen ist). Grund:
-ohne die Aufteilung verschwanden die Vorspeisen einer neu eingegangenen Bestellung leicht
-unter einer bereits laufenden großen Bestellung, obwohl Vorspeisen oft sofort losgehen
-könnten. Bar-Kategorien haben `kitchen_station = null` und sind von dieser Aufteilung
-nicht betroffen.
+Küche drei separate Spalten zu rendern (Vorspeise | Hauptspeise | Barbecue), jede mit
+eigenen Ticket-Karten und eigenem Fortschritt (eine Bestellung kann in der Vorspeise-Spalte
+schon grün sein, während ihre Hauptspeise-Karte noch offen ist). Hauptspeise (Ramen,
+Nudeln, Reisgerichte, Suppen) ist die breiteste der drei Spalten, weil dort die meisten
+Bestellungen zusammenlaufen. Grund für die Aufteilung insgesamt: ohne sie verschwanden
+Vorspeisen und Barbecue-Bestellungen leicht unter einer bereits laufenden großen
+Hauptspeise-Bestellung, obwohl Vorspeisen oft sofort losgehen könnten und Barbecue eine
+eigene Zubereitungsstation ist. Bar-Kategorien haben `kitchen_station = null` und sind von
+dieser Aufteilung nicht betroffen.
 
-Die Bar hat stattdessen dieselbe Zwei-Spalten-Idee, aber getrennt nach `menu_group`
-(Getränke links, Nachspeisen rechts) statt nach `kitchen_station` — Bar-Kategorien haben
-kein `kitchen_station`, aber `menu_group` ist ohnehin schon auf jeder Kategorie vorhanden,
-ein eigenes Feld war dafür nicht nötig. Aus demselben Grund wie bei der Küche: ohne die
+Die Bar hat stattdessen dieselbe Mehr-Spalten-Idee, aber getrennt nach `menu_group`
+(Getränke | Nachspeisen) statt nach `kitchen_station` — Bar-Kategorien haben kein
+`kitchen_station`, aber `menu_group` ist ohnehin schon auf jeder Kategorie vorhanden, ein
+eigenes Feld war dafür nicht nötig. Aus demselben Grund wie bei der Küche: ohne die
 Trennung verschwinden neu eingegangene Getränke leicht unter einer bereits laufenden
-großen Nachspeisen-Bestellung (oder umgekehrt). Beide Spalten (Küche wie Bar) zeigen die
-Ticket-Karten außerdem als Zwei-Spalten-Kartenraster (`columns={2}` in `TicketList`) statt
-einer einzelnen tief scrollenden Liste, damit auf einen Blick mehr offene Tickets sichtbar
-sind. In beiden Fällen fällt eine Karte aus ihrer Spalte raus, sobald alle Positionen
-*dieser* Spalte abgehakt sind — unabhängig davon, ob die Bestellung insgesamt (in der
-jeweils anderen Spalte) noch offen ist. Nur der "Offen"-Tab ist aufgeteilt; die "Fertig"-
-Historie bleibt bei beiden Geräten eine einfache Liste.
+großen Nachspeisen-Bestellung (oder umgekehrt); Getränke ist entsprechend die breitere der
+beiden offenen Spalten. Anders als die Küche hat die Bar zusätzlich keinen umschaltbaren
+"Fertig"-Tab mehr — Vergangene Bestellungen steht bei ihr immer als dritte, schmalere
+Spalte direkt daneben, damit man dafür nicht extra umschalten muss. Alle offenen Spalten
+(Küche wie Bar) zeigen ihre Ticket-Karten außerdem als Zwei-Spalten-Kartenraster
+(`columns={2}` in `TicketList`) statt einer einzelnen tief scrollenden Liste, damit auf
+einen Blick mehr offene Tickets sichtbar sind. In allen Fällen fällt eine Karte aus ihrer
+Spalte raus, sobald alle Positionen *dieser* Spalte abgehakt sind — unabhängig davon, ob
+die Bestellung insgesamt (in einer anderen Spalte) noch offen ist. Bei der Küche ist nur
+der "Offen"-Tab aufgeteilt, die "Fertig"-Historie bleibt dort eine einfache Liste.
 
 ## Status-Workflow
 

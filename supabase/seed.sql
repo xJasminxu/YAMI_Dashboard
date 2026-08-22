@@ -321,6 +321,15 @@ on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   variant_options = excluded.variant_options;
 
+-- Weinschorle — süß oder sauer, beide 5,90€, kein Flaschen-Format wie beim reinen Wein
+-- oben (Mischgetränk, nur ein Glas).
+insert into menu_items (category_id, name_hanzi, name_de, variant_options) values
+  ((select id from categories where name_de = 'wein'), null, 'Weinschorle',
+    '[{"name_hanzi": "süß", "name_de": "Süß", "price": 5.90}, {"name_hanzi": "sauer", "name_de": "Sauer", "price": 5.90}]')
+on conflict (category_id, name_de) do update set
+  name_hanzi = excluded.name_hanzi,
+  variant_options = excluded.variant_options;
+
 -- Kaffee / Tee / Matcha
 insert into menu_items (category_id, name_hanzi, name_de, price) values
   ((select id from categories where name_de = 'kaffee/tee/matcha'), null, 'Espresso', 2.90),
@@ -343,7 +352,7 @@ insert into menu_items (category_id, name_hanzi, name_de, variant_options) value
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Cola',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Spezi',
-    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
+    '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.5L", "name_de": "0,5L", "price": 4.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Cola Zero',
     '[{"name_hanzi": "0.2L", "name_de": "0,2L", "price": 2.90}, {"name_hanzi": "0.4L", "name_de": "0,4L", "price": 3.90}]'),
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Sprite',
@@ -366,11 +375,12 @@ on conflict (category_id, name_de) do update set
   price = excluded.price,
   variant_options = excluded.variant_options;
 
--- Wasser — kombinierter Art-/Mengen-Dialog (variant_options): Still/Sprudel × 0,33L/0,75L,
--- gleiche Preise wie zuvor (2,90€/5,90€, unabhängig von still vs. sprudel).
+-- Wasser — kombinierter Art-/Mengen-Dialog (variant_options): Still/Sprudel × 0,2L/0,4L/
+-- 0,75L. 0,33L wurde durch 0,2L/0,4L ersetzt (2,90€/3,90€, wie bei den Softgetränken),
+-- 0,75L bleibt zum bisherigen Preis (5,90€) bestehen.
 insert into menu_items (category_id, name_hanzi, name_de, variant_options) values
   ((select id from categories where name_de = 'alkoholfreie getränke'), null, 'Wasser',
-    '[{"name_hanzi": "0.33L still", "name_de": "Still 0,33L", "price": 2.90}, {"name_hanzi": "0.75L still", "name_de": "Still 0,75L", "price": 5.90}, {"name_hanzi": "0.33L sprudel", "name_de": "Sprudel 0,33L", "price": 2.90}, {"name_hanzi": "0.75L sprudel", "name_de": "Sprudel 0,75L", "price": 5.90}]')
+    '[{"name_hanzi": "0.2L still", "name_de": "Still 0,2L", "price": 2.90}, {"name_hanzi": "0.4L still", "name_de": "Still 0,4L", "price": 3.90}, {"name_hanzi": "0.75L still", "name_de": "Still 0,75L", "price": 5.90}, {"name_hanzi": "0.2L sprudel", "name_de": "Sprudel 0,2L", "price": 2.90}, {"name_hanzi": "0.4L sprudel", "name_de": "Sprudel 0,4L", "price": 3.90}, {"name_hanzi": "0.75L sprudel", "name_de": "Sprudel 0,75L", "price": 5.90}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   variant_options = excluded.variant_options;

@@ -808,6 +808,16 @@ function NumpadDialog({
   onDone: () => void;
   styles: OrderStyles;
 }) {
+  // onChange schreibt bei jedem Tastendruck direkt in die Tischnummer des Eltern-Screens
+  // (für die Live-Anzeige hinter dem Dialog), "Abbrechen" muss also den Stand von vor dem
+  // Öffnen separat merken, um ihn zurückzuschreiben, statt nur den Dialog zu schließen.
+  const [snapshot, setSnapshot] = useState(value);
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (visible) setSnapshot(value);
+  }
+
   function press(key: (typeof NUMPAD_KEYS)[number]) {
     if (key === 'clear') {
       onChange('');
@@ -818,8 +828,13 @@ function NumpadDialog({
     }
   }
 
+  function handleCancel() {
+    onChange(snapshot);
+    onDone();
+  }
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDone}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCancel}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>Tischnummer</Text>
@@ -837,6 +852,9 @@ function NumpadDialog({
             disabled={!value}
           >
             <Text style={styles.submitButtonText}>Fertig</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.modalCancel} onPress={handleCancel}>
+            <Text style={styles.modalCancelText}>Abbrechen</Text>
           </TouchableOpacity>
         </View>
       </View>

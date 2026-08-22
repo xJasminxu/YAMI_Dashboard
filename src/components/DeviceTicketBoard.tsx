@@ -44,15 +44,15 @@ function cardBackgroundFor(colors: ThemeColors): Record<OrderProgress, object> {
   };
 }
 
-// Reduziert jede Bestellung auf die Positionen, die zum Prädikat passen — Küche trennt
-// so Vorspeise von Hauptspeise/Barbecue (categories.kitchen_station), Bar trennt Getränke
-// von Nachspeisen (categories.menu_group), siehe showTwoColumns unten. Bestellungen ohne
-// passende Position fallen ganz raus. So zeigt jede Spalte der Zwei-Spalten-Ansicht nur
-// ihre eigenen Karten (mit eigenem Fortschritt/Farbe), statt dass eine große laufende
-// Bestellung neu eingegangene Positionen der jeweils anderen Spalte unter sich begräbt.
-// Eine Karte fällt aus ihrer Spalte raus, sobald alle Positionen DIESER Spalte abgehakt
-// sind — unabhängig davon, ob die Bestellung insgesamt (in der jeweils anderen Spalte)
-// noch offen ist.
+// Reduziert jede Bestellung auf die Positionen, die zum Prädikat passen — Küche trennt so
+// Vorspeise | Hauptspeise | Barbecue (categories.kitchen_station) in drei Spalten, Bar
+// trennt Getränke von Nachspeisen (categories.menu_group) in zwei, siehe showOpenColumns
+// unten. Bestellungen ohne passende Position fallen ganz raus. So zeigt jede Spalte der
+// Mehr-Spalten-Ansicht nur ihre eigenen Karten (mit eigenem Fortschritt/Farbe), statt dass
+// eine große laufende Bestellung neu eingegangene Positionen einer anderen Spalte unter
+// sich begräbt. Eine Karte fällt aus ihrer Spalte raus, sobald alle Positionen DIESER
+// Spalte abgehakt sind — unabhängig davon, ob die Bestellung insgesamt (in einer anderen
+// Spalte) noch offen ist.
 function itemsMatching(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
   return orders
     .map((order) => ({
@@ -143,43 +143,69 @@ export default function DeviceTicketBoard({
     return { open, done };
   }, [orders]);
 
-  // Zwei-Spalten-Ansicht nur für den "Offen"-Tab — die "Fertig"-Historie bleibt eine
-  // einfache Liste, da dort keine Eile mehr besteht. Küche trennt Vorspeise von
-  // Hauptspeise/Barbecue, Bar trennt Getränke von Nachspeisen (siehe itemsMatching).
-  const showTwoColumns = tab === 'offen';
+  // Bar zeigt Vergangene Bestellungen nicht mehr in einem umschaltbaren Tab, sondern immer
+  // zusätzlich als dritte, schmalere Spalte neben Getränke/Nachspeisen (siehe isBar unten)
+  // — die Küche behält ihre Tab-Aufteilung (Offen/Fertig), da bei ihr Eile beim "Offen"-Tab
+  // im Vordergrund steht und die Fertig-Historie seltener gebraucht wird.
+  const isBar = targetDevice === 'bar';
 
-  const { primaryOrders, primaryTitle, primaryEmptyText, secondaryOrders, secondaryTitle, secondaryEmptyText } =
-    useMemo(() => {
-      const empty = {
-        primaryOrders: [] as GroupedOrder[],
-        primaryTitle: '',
-        primaryEmptyText: '',
-        secondaryOrders: [] as GroupedOrder[],
-        secondaryTitle: '',
-        secondaryEmptyText: '',
-      };
-      if (!showTwoColumns) return empty;
+  // Spalten-Aufteilung der offenen Positionen: bei der Küche nur für den "Offen"-Tab (die
+  // "Fertig"-Historie bleibt dort eine einfache Liste), bei der Bar immer, weil die offenen
+  // Spalten dort permanent neben der Vergangene-Bestellungen-Spalte stehen. Küche trennt
+  // Vorspeise | Hauptspeise (Ramen/Nudeln/Reisgerichte/Suppen) | Barbecue in drei Spalten,
+  // Bar trennt Getränke | Nachspeisen in zwei (siehe itemsMatching). tertiaryOrders bleibt
+  // bei der Bar ungenutzt leer.
+  const showOpenColumns = isBar || tab === 'offen';
 
-      if (targetDevice === 'kitchen') {
-        return {
-          primaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise'),
-          primaryTitle: 'Vorspeise',
-          primaryEmptyText: 'Keine offenen Vorspeisen.',
-          secondaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') !== 'vorspeise'),
-          secondaryTitle: 'Hauptspeise & Barbecue',
-          secondaryEmptyText: 'Keine offenen Hauptspeisen.',
-        };
-      }
+  const {
+    primaryOrders,
+    primaryTitle,
+    primaryEmptyText,
+    secondaryOrders,
+    secondaryTitle,
+    secondaryEmptyText,
+    tertiaryOrders,
+    tertiaryTitle,
+    tertiaryEmptyText,
+  } = useMemo(() => {
+    const empty = {
+      primaryOrders: [] as GroupedOrder[],
+      primaryTitle: '',
+      primaryEmptyText: '',
+      secondaryOrders: [] as GroupedOrder[],
+      secondaryTitle: '',
+      secondaryEmptyText: '',
+      tertiaryOrders: [] as GroupedOrder[],
+      tertiaryTitle: '',
+      tertiaryEmptyText: '',
+    };
+    if (!showOpenColumns) return empty;
 
+    if (targetDevice === 'kitchen') {
       return {
-        primaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'getraenke'),
-        primaryTitle: 'Getränke',
-        primaryEmptyText: 'Keine offenen Getränke.',
-        secondaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'nachspeisen'),
-        secondaryTitle: 'Nachspeisen',
-        secondaryEmptyText: 'Keine offenen Nachspeisen.',
+        ...empty,
+        primaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise'),
+        primaryTitle: 'Vorspeise',
+        primaryEmptyText: 'Keine offenen Vorspeisen.',
+        secondaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'hauptspeise'),
+        secondaryTitle: 'Hauptspeise',
+        secondaryEmptyText: 'Keine offenen Hauptspeisen.',
+        tertiaryOrders: itemsMatching(open, (item) => item.menu_item.category.kitchen_station === 'barbecue'),
+        tertiaryTitle: 'Barbecue',
+        tertiaryEmptyText: 'Keine offenen Barbecue-Bestellungen.',
       };
-    }, [open, showTwoColumns, targetDevice]);
+    }
+
+    return {
+      ...empty,
+      primaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'getraenke'),
+      primaryTitle: 'Getränke',
+      primaryEmptyText: 'Keine offenen Getränke.',
+      secondaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'nachspeisen'),
+      secondaryTitle: 'Nachspeisen',
+      secondaryEmptyText: 'Keine offenen Nachspeisen.',
+    };
+  }, [open, showOpenColumns, targetDevice]);
 
   const visibleOrders = tab === 'offen' ? open : done;
 
@@ -202,16 +228,24 @@ export default function DeviceTicketBoard({
   return (
     <View style={styles.container}>
       <View style={styles.tabBar}>
-        <View style={styles.tabsRow}>
-          <TouchableOpacity style={[styles.tab, tab === 'offen' && styles.tabActive]} onPress={() => setTab('offen')}>
-            <Text style={[styles.tabText, tab === 'offen' && styles.tabTextActive]}>Offen ({open.length})</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.tab, tab === 'fertig' && styles.tabActive]} onPress={() => setTab('fertig')}>
-            <Text style={[styles.tabText, tab === 'fertig' && styles.tabTextActive]}>
-              Vergangene Bestellungen ({done.length})
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {isBar ? (
+          // Kein Tab-Umschalter mehr für die Bar — Vergangene Bestellungen stehen immer
+          // als eigene Spalte daneben (siehe unten), hier nur noch ein statischer Titel.
+          <View style={styles.tabsRow}>
+            <Text style={styles.barTitleText}>Bar — {open.length} offen</Text>
+          </View>
+        ) : (
+          <View style={styles.tabsRow}>
+            <TouchableOpacity style={[styles.tab, tab === 'offen' && styles.tabActive]} onPress={() => setTab('offen')}>
+              <Text style={[styles.tabText, tab === 'offen' && styles.tabTextActive]}>Offen ({open.length})</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.tab, tab === 'fertig' && styles.tabActive]} onPress={() => setTab('fertig')}>
+              <Text style={[styles.tabText, tab === 'fertig' && styles.tabTextActive]}>
+                Vergangene Bestellungen ({done.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
         <TouchableOpacity
           style={[styles.bellButton, large && styles.bellButtonLarge]}
           onPress={toggleSound}
@@ -223,12 +257,14 @@ export default function DeviceTicketBoard({
         </TouchableOpacity>
       </View>
 
-      {tab === 'offen' && open.length === 0 ? (
-        <EmptyBoardBanner large={large} styles={styles} />
-      ) : showTwoColumns ? (
+      {isBar ? (
+        // Kein EmptyBoardBanner-Vollbild für die Bar: die Vergangene-Bestellungen-Spalte
+        // soll immer sichtbar bleiben, auch wenn gerade nichts offen ist — ein Vollbild-
+        // Banner würde sie verdecken. Leere Getränke-/Nachspeisen-Spalten zeigen stattdessen
+        // einfach ihren eigenen emptyText.
         <View style={styles.stationRow}>
-          <View style={styles.stationColumn}>
-            <StationHeader title={primaryTitle} openCount={countOpenItems(primaryOrders)} large={large} styles={styles} />
+          <View style={styles.stationColumnWide}>
+            <StationHeader title={primaryTitle} count={countOpenItems(primaryOrders)} large={large} styles={styles} />
             <TicketList
               orders={primaryOrders}
               large={large}
@@ -243,12 +279,7 @@ export default function DeviceTicketBoard({
           </View>
           <View style={styles.stationDivider} />
           <View style={styles.stationColumn}>
-            <StationHeader
-              title={secondaryTitle}
-              openCount={countOpenItems(secondaryOrders)}
-              large={large}
-              styles={styles}
-            />
+            <StationHeader title={secondaryTitle} count={countOpenItems(secondaryOrders)} large={large} styles={styles} />
             <TicketList
               orders={secondaryOrders}
               large={large}
@@ -261,11 +292,83 @@ export default function DeviceTicketBoard({
               columns={2}
             />
           </View>
+          <View style={styles.stationDivider} />
+          <View style={styles.pastColumn}>
+            <StationHeader title="Vergangene Bestellungen" count={done.length} suffix="erledigt" large={large} styles={styles} />
+            <TicketList
+              orders={done}
+              large={large}
+              styles={styles}
+              cardBackground={cardBackground}
+              onToggleItem={setItemStatus}
+              emptyText="Noch keine erledigten Bestellungen."
+            />
+          </View>
+        </View>
+      ) : tab === 'offen' && open.length === 0 ? (
+        <EmptyBoardBanner large={large} styles={styles} />
+      ) : showOpenColumns ? (
+        // Drei Spalten für die Küche: Vorspeise | Hauptspeise (Ramen/Nudeln/Reisgerichte/
+        // Suppen) | Barbecue — vorher war Hauptspeise+Barbecue eine gemeinsame Spalte, was
+        // Barbecue-Bestellungen leicht unter laufenden Ramen/Nudel-Bestellungen verschwinden
+        // ließ.
+        <View style={styles.stationRow}>
+          <View style={styles.stationColumn}>
+            <StationHeader title={primaryTitle} count={countOpenItems(primaryOrders)} large={large} styles={styles} />
+            <TicketList
+              orders={primaryOrders}
+              large={large}
+              styles={styles}
+              cardBackground={cardBackground}
+              onToggleItem={setItemStatus}
+              onCompleteOrder={completeOrder}
+              allowComplete
+              emptyText={primaryEmptyText}
+              columns={2}
+            />
+          </View>
+          <View style={styles.stationDivider} />
+          {/* stationColumnWide statt stationColumn: dieser Zweig läuft (siehe isBar oben)
+              nur für die Küche, wo Hauptspeise die breiteste der drei Spalten sein soll —
+              die meisten Bestellungen (Ramen, Nudeln, Reisgerichte, Suppen) laufen hier auf. */}
+          <View style={styles.stationColumnWide}>
+            <StationHeader title={secondaryTitle} count={countOpenItems(secondaryOrders)} large={large} styles={styles} />
+            <TicketList
+              orders={secondaryOrders}
+              large={large}
+              styles={styles}
+              cardBackground={cardBackground}
+              onToggleItem={setItemStatus}
+              onCompleteOrder={completeOrder}
+              allowComplete
+              emptyText={secondaryEmptyText}
+              columns={2}
+            />
+          </View>
+          {targetDevice === 'kitchen' && (
+            <>
+              <View style={styles.stationDivider} />
+              <View style={styles.stationColumn}>
+                <StationHeader title={tertiaryTitle} count={countOpenItems(tertiaryOrders)} large={large} styles={styles} />
+                <TicketList
+                  orders={tertiaryOrders}
+                  large={large}
+                  styles={styles}
+                  cardBackground={cardBackground}
+                  onToggleItem={setItemStatus}
+                  onCompleteOrder={completeOrder}
+                  allowComplete
+                  emptyText={tertiaryEmptyText}
+                  columns={2}
+                />
+              </View>
+            </>
+          )}
         </View>
       ) : (
-        // Dieser Zweig läuft nur, wenn showTwoColumns false ist, also tab==='fertig' —
-        // die "Offen"-Ansicht rendert immer über den showTwoColumns-Zweig oben (bei beiden
-        // Geräten, siehe showTwoColumns).
+        // Dieser Zweig läuft nur für die Küche, wenn tab==='fertig' — die Bar hat keinen
+        // Tab-Umschalter mehr (siehe isBar oben), die "Offen"-Ansicht der Küche rendert
+        // immer über den showOpenColumns-Zweig oben.
         <TicketList
           orders={visibleOrders}
           large={large}
@@ -280,11 +383,12 @@ export default function DeviceTicketBoard({
   );
 }
 
-// Ersetzt die Ticket-Liste komplett, solange im "Offen"-Tab nichts ansteht (statt nur
-// eines schlichten ListEmptyComponent-Texts wie sonst) — ein kleiner Spaß für die Küche/
-// Bar in ruhigen Momenten. Bei der Zwei-Spalten-Ansicht gilt das für beide Spalten
-// gleichzeitig (dieselbe `open`-Liste speist beide), deshalb einmal über dem ganzen Board
-// statt einmal pro Spalte.
+// Ersetzt die Ticket-Liste komplett, solange im "Offen"-Tab der Küche nichts ansteht
+// (statt nur eines schlichten ListEmptyComponent-Texts wie sonst) — ein kleiner Spaß für
+// ruhige Momente. Gilt für alle drei Spalten gleichzeitig (dieselbe `open`-Liste speist
+// sie alle), deshalb einmal über dem ganzen Board statt einmal pro Spalte. Die Bar hat
+// dieses Vollbild-Banner nicht (siehe isBar), da ihre Vergangene-Bestellungen-Spalte immer
+// sichtbar bleiben soll.
 function EmptyBoardBanner({ large, styles }: { large: boolean; styles: BoardStyles }) {
   return (
     <View style={styles.emptyBanner}>
@@ -302,27 +406,33 @@ function EmptyBoardBanner({ large, styles }: { large: boolean; styles: BoardStyl
 
 function StationHeader({
   title,
-  openCount,
+  count,
+  suffix = 'offen',
   large,
   styles,
 }: {
   title: string;
-  openCount: number;
+  count: number;
+  // 'erledigt' für die Vergangene-Bestellungen-Spalte der Bar (siehe isBar), sonst
+  // Standard 'offen' wie für Vorspeise/Hauptspeise/Getränke/Nachspeisen.
+  suffix?: string;
   large: boolean;
   styles: BoardStyles;
 }) {
   return (
     <View style={styles.stationHeader}>
       <Text style={[styles.stationHeaderText, large && styles.stationHeaderTextLarge]}>{title}</Text>
-      <Text style={[styles.stationHeaderCount, large && styles.stationHeaderCountLarge]}>{openCount} offen</Text>
+      <Text style={[styles.stationHeaderCount, large && styles.stationHeaderCountLarge]}>
+        {count} {suffix}
+      </Text>
     </View>
   );
 }
 
 // Eine Spalte Bestellkarten — dieselbe Karten-Darstellung wird sowohl für die normale
-// Einzel-Liste (der "Fertig"-Tab beider Geräte) als auch für jede der beiden Spalten der
-// "Offen"-Zwei-Spalten-Ansicht verwendet, damit Kartenlayout/-verhalten überall identisch
-// bleiben.
+// Einzel-Liste (der "Fertig"-Tab der Küche, die Vergangene-Bestellungen-Spalte der Bar) als
+// auch für jede Spalte der "Offen"-Mehr-Spalten-Ansicht verwendet, damit Kartenlayout/
+// -verhalten überall identisch bleiben.
 function TicketList({
   orders,
   large,
@@ -496,6 +606,9 @@ const createStyles = (colors: ThemeColors) =>
     tabActive: { borderBottomWidth: 3, borderBottomColor: colors.text },
     tabText: { fontSize: 15, color: colors.textMuted },
     tabTextActive: { color: colors.text, fontWeight: '700' },
+    // Ersetzt die Tabs für die Bar (siehe isBar) — nur noch ein statischer Hinweistext,
+    // da es nichts mehr umzuschalten gibt.
+    barTitleText: { fontSize: 15, fontWeight: '700', color: colors.text, paddingVertical: 14, paddingLeft: 4 },
     bellButton: { paddingHorizontal: 14, paddingVertical: 10 },
     bellButtonLarge: { paddingHorizontal: 18, paddingVertical: 14 },
     bellButtonText: { fontSize: 22 },
@@ -526,12 +639,20 @@ const createStyles = (colors: ThemeColors) =>
     emptyBannerTextLarge: { fontSize: 78 },
     emptyBannerImage: { width: 420, aspectRatio: 3 / 4 },
     emptyBannerImageLarge: { width: 280 },
-    // Zwei-Spalten-Ansicht im "Offen"-Tab (Küche: Vorspeise | Hauptspeise+Barbecue, Bar:
+    // Mehr-Spalten-Ansicht im "Offen"-Tab (Küche: Vorspeise | Hauptspeise | Barbecue, Bar:
     // Getränke | Nachspeisen), jede Spalte unabhängig scrollbar, damit eine große laufende
-    // Bestellung nicht mehr die neu eingegangenen Positionen der jeweils anderen Spalte
+    // Bestellung nicht mehr die neu eingegangenen Positionen einer anderen Spalte
     // wegscrollt.
     stationRow: { flex: 1, flexDirection: 'row' },
     stationColumn: { flex: 1 },
+    // Breiteste der offenen Spalten: Getränke bei der Bar (mehr Bestellungen als
+    // Nachspeisen) bzw. Hauptspeise bei der Küche (Ramen/Nudeln/Reisgerichte/Suppen laufen
+    // hier zusammen, mehr als bei Vorspeise oder Barbecue allein).
+    stationColumnWide: { flex: 1.8 },
+    // Vergangene-Bestellungen-Spalte der Bar (siehe isBar) — schmaler als die beiden
+    // offenen Spalten, da hier nur noch zur Kontrolle nachgeschaut wird, keine Eile mehr
+    // besteht.
+    pastColumn: { flex: 0.6 },
     stationDivider: { width: 1, backgroundColor: colors.border },
     stationHeader: {
       flexDirection: 'row',
