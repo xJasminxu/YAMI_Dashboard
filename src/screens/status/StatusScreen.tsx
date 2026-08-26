@@ -23,7 +23,7 @@ interface RecentlyDoneEntry {
   item: DeviceOrderItem;
 }
 
-const RECENTLY_DONE_LIMIT = 7;
+const RECENTLY_DONE_LIMIT = 20;
 
 // Extrahiert die zuletzt fertiggestellten Items aus einem Satz Bestellungen (Küche
 // ODER Bar, siehe getrennte Aufrufe unten) — Küche und Bar werden getrennt gehalten

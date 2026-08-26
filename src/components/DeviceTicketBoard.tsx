@@ -9,7 +9,7 @@ import type { ThemeColors } from '../theme/colors';
 import { useTheme } from '../theme/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 
-type Tab = 'offen' | 'fertig';
+type Tab = 'offen' | 'fertig' | 'anzahl' | 'komplett';
 type BoardStyles = ReturnType<typeof createStyles>;
 
 // Zeigt sich, wenn im "Offen"-Tab (Küche oder Bar) gerade nichts zu tun ist — links
@@ -44,15 +44,13 @@ function cardBackgroundFor(colors: ThemeColors): Record<OrderProgress, object> {
   };
 }
 
-// Reduziert jede Bestellung auf die Positionen, die zum Prädikat passen — Küche trennt so
-// Vorspeise | Hauptspeise | Barbecue (categories.kitchen_station) in drei Spalten, Bar
-// trennt Getränke von Nachspeisen (categories.menu_group) in zwei, siehe showOpenColumns
-// unten. Bestellungen ohne passende Position fallen ganz raus. So zeigt jede Spalte der
-// Mehr-Spalten-Ansicht nur ihre eigenen Karten (mit eigenem Fortschritt/Farbe), statt dass
-// eine große laufende Bestellung neu eingegangene Positionen einer anderen Spalte unter
-// sich begräbt. Eine Karte fällt aus ihrer Spalte raus, sobald alle Positionen DIESER
-// Spalte abgehakt sind — unabhängig davon, ob die Bestellung insgesamt (in einer anderen
-// Spalte) noch offen ist.
+// Reduziert jede Bestellung auf die Positionen, die zum Prädikat passen — für die Bar
+// (Getränke/Nachspeisen, siehe categories.menu_group). Eine Karte behält dabei auch bereits
+// abgehakte Positionen (nur durchgestrichen) und fällt erst raus, sobald ALLE Positionen
+// DIESER Spalte abgehakt sind — die Bar hat (anders als die Küche seit Kurzem, siehe
+// stationOpenOnly unten) keine separate "einzelne Position sofort raus"-Logik, weil ihre
+// "Vergangene Bestellungen"-Spalte ohnehin nur ganze fertige Bestellungen zeigt (`done`,
+// siehe isBar-Zweig), nicht einzelne fertige Positionen.
 function itemsMatching(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
   return orders
     .map((order) => ({
@@ -62,14 +60,122 @@ function itemsMatching(orders: GroupedOrder[], predicate: (item: DeviceOrderItem
     .filter((order) => order.items.some((item) => item.status === 'offen'));
 }
 
+// Wie itemsMatching, aber nur für die Küchen-Stationen-Spalten im "Offen"-Tab: behält je
+// Karte NUR die tatsächlich noch offenen Positionen (nicht wie itemsMatching auch bereits
+// abgehakte, die dort "nur" die Karte offen halten). Sobald eine einzelne Position
+// abgehakt wird, verschwindet SIE sofort aus der Offen-Karte — und taucht dank
+// stationDoneItems (siehe unten) im selben Moment als eigene Karte in der passenden
+// Vergangene-Bestellungen-Spalte auf — statt bis zur letzten Position derselben Station in der
+// Offen-Karte liegen zu bleiben und dort unnötig Platz zu blockieren, den eine neu
+// eingehende Bestellung bräuchte.
+function stationOpenOnly(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
+  return orders
+    .map((order) => ({
+      ...order,
+      items: order.items.filter((item) => item.status === 'offen' && predicate(item)),
+    }))
+    .filter((order) => order.items.length > 0);
+}
+
 // Zeitpunkt, an dem die letzte Position der Bestellung fertig markiert wurde — bestimmt
 // die Reihenfolge der "Vergangene Bestellungen"-Liste (neueste zuerst).
 function latestDoneAt(order: GroupedOrder): number {
   return order.items.reduce((latest, item) => Math.max(latest, item.done_at ? new Date(item.done_at).getTime() : 0), 0);
 }
 
+// Gegenstück zu stationOpenOnly für die "Vergangene Bestellungen"-Spalten der Küche: liefert
+// pro fertig abgehakter Position DIESER Station eine EIGENE Karte (nicht wie vorher alle
+// fertigen Positionen einer Bestellung zusammen in einer Karte) — jede Karte trägt weiterhin
+// Tisch/Zeit der ursprünglichen Bestellung, aber nur genau diese eine Position. Sortiert
+// nach dem individuellen done_at jeder Position (neueste zuerst), nicht nach dem spätesten
+// done_at einer ganzen Bestellung — sonst hätte eine um 10:05 abgehakte Position eine um
+// 10:00 abgehakte Position derselben Bestellung "mit nach oben gezogen", obwohl dazwischen
+// noch andere Bestellungen fertig wurden. Grund für die Aufsplittung: Köche haken
+// gelegentlich aus Versehen die falsche Position ab — steckte sie in einer Sammelkarte mit
+// mehreren Positionen, musste erst gesucht werden, welche der mehreren Positionen es war,
+// um sie durch erneutes Antippen zurück auf "offen" zu setzen. Als eigene, klar
+// abgegrenzte Karte ganz oben (dank Sortierung nach Zeit) ist sofort erkennbar, welche
+// Position das war. Läuft über `orders` (nicht nur `open`), da eine Bestellung, deren
+// Vorspeise komplett fertig ist, ggf. schon nicht mehr in `open` steckt, wenn auch die
+// restlichen Stationen fertig sind — die Position soll aber trotzdem gefunden werden.
+function stationDoneItems(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
+  const entries: GroupedOrder[] = [];
+
+  for (const order of orders) {
+    for (const item of order.items) {
+      if (item.status !== 'fertig' || !predicate(item)) continue;
+      entries.push({
+        ...order,
+        // orderId ist normalerweise pro Bestellung eindeutig — hier bewusst pro Position
+        // (item.id), da jede Position jetzt ihre eigene Karte ist und React/FlatList einen
+        // pro Karte eindeutigen key braucht (siehe keyExtractor in TicketList).
+        orderId: item.id,
+        items: [item],
+      });
+    }
+  }
+
+  return entries.sort((a, b) => latestDoneAt(b) - latestDoneAt(a));
+}
+
 function countOpenItems(orders: GroupedOrder[]): number {
   return orders.reduce((sum, order) => sum + order.items.filter((item) => item.status === 'offen').length, 0);
+}
+
+// Für die "erledigt"-Zähler der Vergangene-Bestellungen-Spalten — orders kommen hier
+// bereits aus stationDoneItems, alle enthaltenen Positionen sind also schon fertig, ein
+// Status-Filter wie bei countOpenItems ist daher nicht nötig.
+function countItems(orders: GroupedOrder[]): number {
+  return orders.reduce((sum, order) => sum + order.items.length, 0);
+}
+
+interface DishCount {
+  key: string;
+  dishLabel: string;
+  variantLabel: string | null;
+  count: number;
+}
+
+// Baut aus allen noch offenen Positionen einer Station eine nach Menge sortierte
+// Stückzahl-Liste (z.B. "5× Gyoza") statt einzelner Ticket-Karten — für den "Anzahl"-Tab
+// der Küche (siehe unten), damit man bei vielen gleichen Bestellungen (z.B. mehrere
+// Gyoza-Bestellungen gleichzeitig) direkt in einem Rutsch nachbraten kann, ohne selbst über
+// die Ticket-Karten zu zählen. Gruppiert nach Gericht + Variante (Rind/Huhn zählt getrennt,
+// da unterschiedliche Zubereitung) — Extras fließen bewusst NICHT in die Gruppierung ein
+// (bleiben Sache der einzelnen Ticket-Karte in Offen/Vergangene Bestellungen), sonst würde
+// aus 5 identischen Gyoza mit je unterschiedlichen Extra-Wünschen fälschlich 5 einzelne
+// Positionen statt "5× Gyoza" werden.
+function aggregateOpen(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): DishCount[] {
+  const byKey = new Map<string, DishCount>();
+
+  for (const order of orders) {
+    for (const item of order.items) {
+      if (item.status !== 'offen' || !predicate(item)) continue;
+
+      const variantLabel = item.variant_hanzi ?? item.variant_de ?? null;
+      const key = `${item.menu_item.id}::${variantLabel ?? ''}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.count += 1;
+        continue;
+      }
+
+      const { name_hanzi, name_de, item_code } = item.menu_item;
+      const code = item_code ? `${item_code} · ` : '';
+      byKey.set(key, {
+        key,
+        dishLabel: name_hanzi ? `${code}${name_hanzi} (${name_de})` : `${code}${name_de}`,
+        variantLabel,
+        count: 1,
+      });
+    }
+  }
+
+  return Array.from(byKey.values()).sort((a, b) => b.count - a.count || a.dishLabel.localeCompare(b.dishLabel, 'de'));
+}
+
+function sumCounts(entries: DishCount[]): number {
+  return entries.reduce((sum, entry) => sum + entry.count, 0);
 }
 
 // large: größere Karten/Schrift für Geräte, die aus Distanz gelesen werden
@@ -145,59 +251,15 @@ export default function DeviceTicketBoard({
 
   // Bar zeigt Vergangene Bestellungen nicht mehr in einem umschaltbaren Tab, sondern immer
   // zusätzlich als dritte, schmalere Spalte neben Getränke/Nachspeisen (siehe isBar unten)
-  // — die Küche behält ihre Tab-Aufteilung (Offen/Fertig), da bei ihr Eile beim "Offen"-Tab
-  // im Vordergrund steht und die Fertig-Historie seltener gebraucht wird.
+  // — die Küche behält ihre Tab-Aufteilung (Offen/Fertig).
   const isBar = targetDevice === 'bar';
 
-  // Spalten-Aufteilung der offenen Positionen: bei der Küche nur für den "Offen"-Tab (die
-  // "Fertig"-Historie bleibt dort eine einfache Liste), bei der Bar immer, weil die offenen
-  // Spalten dort permanent neben der Vergangene-Bestellungen-Spalte stehen. Küche trennt
-  // Vorspeise | Hauptspeise (Ramen/Nudeln/Reisgerichte/Suppen) | Barbecue in drei Spalten,
-  // Bar trennt Getränke | Nachspeisen in zwei (siehe itemsMatching). tertiaryOrders bleibt
-  // bei der Bar ungenutzt leer.
-  const showOpenColumns = isBar || tab === 'offen';
-
-  const {
-    primaryOrders,
-    primaryTitle,
-    primaryEmptyText,
-    secondaryOrders,
-    secondaryTitle,
-    secondaryEmptyText,
-    tertiaryOrders,
-    tertiaryTitle,
-    tertiaryEmptyText,
-  } = useMemo(() => {
-    const empty = {
-      primaryOrders: [] as GroupedOrder[],
-      primaryTitle: '',
-      primaryEmptyText: '',
-      secondaryOrders: [] as GroupedOrder[],
-      secondaryTitle: '',
-      secondaryEmptyText: '',
-      tertiaryOrders: [] as GroupedOrder[],
-      tertiaryTitle: '',
-      tertiaryEmptyText: '',
-    };
-    if (!showOpenColumns) return empty;
-
-    if (targetDevice === 'kitchen') {
-      return {
-        ...empty,
-        primaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise'),
-        primaryTitle: 'Vorspeise',
-        primaryEmptyText: 'Keine offenen Vorspeisen.',
-        secondaryOrders: itemsMatching(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'hauptspeise'),
-        secondaryTitle: 'Hauptspeise',
-        secondaryEmptyText: 'Keine offenen Hauptspeisen.',
-        tertiaryOrders: itemsMatching(open, (item) => item.menu_item.category.kitchen_station === 'barbecue'),
-        tertiaryTitle: 'Barbecue',
-        tertiaryEmptyText: 'Keine offenen Barbecue-Bestellungen.',
-      };
-    }
-
+  // Bar-Spalten (Getränke | Nachspeisen), unverändert immer offen-basiert — die Bar hat
+  // keinen Tab-Umschalter, ihre "Vergangene Bestellungen"-Spalte wird separat weiter unten
+  // aus `done` gespeist (ganze Bestellung fertig, siehe isBar-Zweig im JSX).
+  const barColumns = useMemo(() => {
+    if (!isBar) return null;
     return {
-      ...empty,
       primaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'getraenke'),
       primaryTitle: 'Getränke',
       primaryEmptyText: 'Keine offenen Getränke.',
@@ -205,9 +267,81 @@ export default function DeviceTicketBoard({
       secondaryTitle: 'Nachspeisen',
       secondaryEmptyText: 'Keine offenen Nachspeisen.',
     };
-  }, [open, showOpenColumns, targetDevice]);
+  }, [open, isBar]);
 
-  const visibleOrders = tab === 'offen' ? open : done;
+  // Küchen-Stationen (Vorspeise | Hauptspeise | Barbecue): pro Station sowohl die offenen
+  // als auch die bereits fertigen Karten getrennt berechnen, unabhängig vom gerade
+  // gewählten Tab — die Tab-Leiste zeigt "Offen (n)" und "Vergangene Bestellungen (n)"
+  // gleichzeitig, braucht also beide Zahlen parallel, nicht nur die des sichtbaren Tabs.
+  // "openOrders" enthält je Karte nur noch die tatsächlich offenen Positionen dieser
+  // Station (stationOpenOnly) — "doneOrders" zeigt jede fertig abgehakte Position als
+  // EIGENE Karte (stationDoneItems), sortiert nach individueller Abhak-Zeit (neueste
+  // zuerst), statt mehrere fertige Positionen derselben Bestellung zu einer Sammelkarte
+  // zusammenzufassen. Grund: eine einzelne abgehakte Position soll sofort und klar auffindbar
+  // in "Vergangene Bestellungen" auftauchen, nicht erst wenn ALLE Positionen dieser Station
+  // fertig sind — und falls eine Position aus Versehen abgehakt wurde, steht sie dank der
+  // Sortierung ganz oben und muss nicht erst in einer Sammelkarte gesucht werden, um sie per
+  // erneutem Antippen zurück auf "offen" zu setzen.
+  const kitchenStations = useMemo(() => {
+    if (targetDevice !== 'kitchen') return null;
+
+    const build = (
+      title: string,
+      predicate: (item: DeviceOrderItem) => boolean,
+      openEmptyText: string,
+      doneEmptyText: string
+    ) => ({
+      title,
+      openOrders: stationOpenOnly(orders, predicate),
+      openEmptyText,
+      doneOrders: stationDoneItems(orders, predicate),
+      doneEmptyText,
+    });
+
+    return {
+      primary: build(
+        'Vorspeise',
+        (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise',
+        'Keine offenen Vorspeisen.',
+        'Noch keine erledigten Vorspeisen.'
+      ),
+      secondary: build(
+        'Hauptspeise',
+        (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'hauptspeise',
+        'Keine offenen Hauptspeisen.',
+        'Noch keine erledigten Hauptspeisen.'
+      ),
+      tertiary: build(
+        'Barbecue',
+        (item) => item.menu_item.category.kitchen_station === 'barbecue',
+        'Keine offenen Barbecue-Bestellungen.',
+        'Noch keine erledigten Barbecue-Bestellungen.'
+      ),
+    };
+  }, [orders, targetDevice]);
+
+  // Stückzahl-Zusammenfassung für den "Anzahl"-Tab (siehe aggregateOpen) — dieselbe
+  // Stationen-Aufteilung wie kitchenStations oben, aber aus allen noch offenen Positionen
+  // pro Station eine sortierte "5× Gyoza"-Liste statt einzelner Ticket-Karten.
+  const kitchenDishCounts = useMemo(() => {
+    if (targetDevice !== 'kitchen') return null;
+    return {
+      primary: aggregateOpen(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise'),
+      secondary: aggregateOpen(open, (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'hauptspeise'),
+      tertiary: aggregateOpen(open, (item) => item.menu_item.category.kitchen_station === 'barbecue'),
+    };
+  }, [open, targetDevice]);
+
+  // Tab-Zähler "Vergangene Bestellungen (n)": Summe der drei Stationen-Spalten statt der
+  // alten "ganze Bestellung fertig"-Zählung (`done.length`) — eine Bestellung kann jetzt
+  // gleichzeitig in mehreren Stationen-Spalten als erledigt auftauchen (z.B. Vorspeise UND
+  // Barbecue fertig, Hauptspeise noch offen), der Zähler soll das widerspiegeln statt nur
+  // komplett abgeschlossene Bestellungen zu zählen.
+  const kitchenDoneCardCount = kitchenStations
+    ? kitchenStations.primary.doneOrders.length +
+      kitchenStations.secondary.doneOrders.length +
+      kitchenStations.tertiary.doneOrders.length
+    : 0;
 
   if (loading) {
     return (
@@ -236,13 +370,62 @@ export default function DeviceTicketBoard({
           </View>
         ) : (
           <View style={styles.tabsRow}>
-            <TouchableOpacity style={[styles.tab, tab === 'offen' && styles.tabActive]} onPress={() => setTab('offen')}>
-              <Text style={[styles.tabText, tab === 'offen' && styles.tabTextActive]}>Offen ({open.length})</Text>
+            {/* large && styles.tabLarge/tabTextHanziLarge/tabTextDeLarge: die Küche läuft im
+                "large"-Modus (aus der Distanz lesbar, siehe DeviceTicketBoard-Kommentar
+                oben) — vorher hatte nur der Rest der Karten/Spalten eine große Variante, der
+                Tab selbst blieb bei 15px/kompakter Höhe. Dadurch war "Vergangene
+                Bestellungen" auf dem Küchen-Tablet leicht zu übersehen: fertig abgehakte
+                Bestellungen landeten dort zwar korrekt, aber der Tab dazu ging im
+                hektischen Betrieb optisch unter — wirkte dann wie "Bestellung ist einfach
+                weg". Jeder Tab zeigt zusätzlich Hanzi (primär, oben/größer) über dem
+                deutschen Namen (sekundär, siehe KitchenTabLabel) — dieselbe Sprach-
+                Hierarchie wie bei den Gerichtenamen, weil die Küchenmitarbeiter kein
+                Deutsch sprechen (siehe CLAUDE.md). */}
+            <TouchableOpacity
+              style={[styles.tab, large && styles.tabLarge, tab === 'offen' && styles.tabActive]}
+              onPress={() => setTab('offen')}
+            >
+              <KitchenTabLabel hanzi="待做" de="Offen" count={open.length} active={tab === 'offen'} large={large} styles={styles} />
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.tab, tab === 'fertig' && styles.tabActive]} onPress={() => setTab('fertig')}>
-              <Text style={[styles.tabText, tab === 'fertig' && styles.tabTextActive]}>
-                Vergangene Bestellungen ({done.length})
-              </Text>
+            <TouchableOpacity
+              style={[styles.tab, large && styles.tabLarge, tab === 'fertig' && styles.tabActive]}
+              onPress={() => setTab('fertig')}
+            >
+              <KitchenTabLabel
+                hanzi="已完成"
+                de="Vergangene Bestellungen"
+                count={kitchenDoneCardCount}
+                active={tab === 'fertig'}
+                large={large}
+                styles={styles}
+              />
+            </TouchableOpacity>
+            {/* "Komplett"-Tab: zeigt jedes Tisch-Ticket unfragmentiert (alle Stationen
+                zusammen in einer Karte, mit dem Status jeder einzelnen Position) — anders
+                als Offen/Vergangene Bestellungen, die dieselbe Bestellung stationsweise
+                aufsplitten. Für den Überblick, wenn jemand den ganzen Stand eines Tisches
+                auf einen Blick braucht, statt ihn aus mehreren Spalten zusammenzusuchen. */}
+            <TouchableOpacity
+              style={[styles.tab, large && styles.tabLarge, tab === 'komplett' && styles.tabActive]}
+              onPress={() => setTab('komplett')}
+            >
+              <KitchenTabLabel hanzi="整单" de="Komplett" count={orders.length} active={tab === 'komplett'} large={large} styles={styles} />
+            </TouchableOpacity>
+            {/* "Anzahl"-Tab: fasst alle offenen Positionen zu einer Stückzahl-Liste zusammen
+                (z.B. "5× Gyoza"), damit man bei vielen gleichen Bestellungen nicht selbst
+                über die Ticket-Karten zählen muss, siehe aggregateOpen/kitchenDishCounts. */}
+            <TouchableOpacity
+              style={[styles.tab, large && styles.tabLarge, tab === 'anzahl' && styles.tabActive]}
+              onPress={() => setTab('anzahl')}
+            >
+              <KitchenTabLabel
+                hanzi="数量"
+                de="Anzahl"
+                count={countOpenItems(open)}
+                active={tab === 'anzahl'}
+                large={large}
+                styles={styles}
+              />
             </TouchableOpacity>
           </View>
         )}
@@ -264,31 +447,31 @@ export default function DeviceTicketBoard({
         // einfach ihren eigenen emptyText.
         <View style={styles.stationRow}>
           <View style={styles.stationColumnWide}>
-            <StationHeader title={primaryTitle} count={countOpenItems(primaryOrders)} large={large} styles={styles} />
+            <StationHeader title={barColumns!.primaryTitle} count={countOpenItems(barColumns!.primaryOrders)} large={large} styles={styles} />
             <TicketList
-              orders={primaryOrders}
+              orders={barColumns!.primaryOrders}
               large={large}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
               onCompleteOrder={completeOrder}
               allowComplete
-              emptyText={primaryEmptyText}
+              emptyText={barColumns!.primaryEmptyText}
               columns={2}
             />
           </View>
           <View style={styles.stationDivider} />
           <View style={styles.stationColumn}>
-            <StationHeader title={secondaryTitle} count={countOpenItems(secondaryOrders)} large={large} styles={styles} />
+            <StationHeader title={barColumns!.secondaryTitle} count={countOpenItems(barColumns!.secondaryOrders)} large={large} styles={styles} />
             <TicketList
-              orders={secondaryOrders}
+              orders={barColumns!.secondaryOrders}
               large={large}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
               onCompleteOrder={completeOrder}
               allowComplete
-              emptyText={secondaryEmptyText}
+              emptyText={barColumns!.secondaryEmptyText}
               columns={2}
             />
           </View>
@@ -307,77 +490,129 @@ export default function DeviceTicketBoard({
         </View>
       ) : tab === 'offen' && open.length === 0 ? (
         <EmptyBoardBanner large={large} styles={styles} />
-      ) : showOpenColumns ? (
-        // Drei Spalten für die Küche: Vorspeise | Hauptspeise (Ramen/Nudeln/Reisgerichte/
-        // Suppen) | Barbecue — vorher war Hauptspeise+Barbecue eine gemeinsame Spalte, was
-        // Barbecue-Bestellungen leicht unter laufenden Ramen/Nudel-Bestellungen verschwinden
-        // ließ.
-        <View style={styles.stationRow}>
-          <View style={styles.stationColumn}>
-            <StationHeader title={primaryTitle} count={countOpenItems(primaryOrders)} large={large} styles={styles} />
-            <TicketList
-              orders={primaryOrders}
-              large={large}
-              styles={styles}
-              cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
-              onCompleteOrder={completeOrder}
-              allowComplete
-              emptyText={primaryEmptyText}
-              columns={2}
-            />
-          </View>
-          <View style={styles.stationDivider} />
-          {/* stationColumnWide statt stationColumn: dieser Zweig läuft (siehe isBar oben)
-              nur für die Küche, wo Hauptspeise die breiteste der drei Spalten sein soll —
-              die meisten Bestellungen (Ramen, Nudeln, Reisgerichte, Suppen) laufen hier auf. */}
-          <View style={styles.stationColumnWide}>
-            <StationHeader title={secondaryTitle} count={countOpenItems(secondaryOrders)} large={large} styles={styles} />
-            <TicketList
-              orders={secondaryOrders}
-              large={large}
-              styles={styles}
-              cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
-              onCompleteOrder={completeOrder}
-              allowComplete
-              emptyText={secondaryEmptyText}
-              columns={2}
-            />
-          </View>
-          {targetDevice === 'kitchen' && (
-            <>
-              <View style={styles.stationDivider} />
-              <View style={styles.stationColumn}>
-                <StationHeader title={tertiaryTitle} count={countOpenItems(tertiaryOrders)} large={large} styles={styles} />
-                <TicketList
-                  orders={tertiaryOrders}
-                  large={large}
-                  styles={styles}
-                  cardBackground={cardBackground}
-                  onToggleItem={setItemStatus}
-                  onCompleteOrder={completeOrder}
-                  allowComplete
-                  emptyText={tertiaryEmptyText}
-                  columns={2}
-                />
-              </View>
-            </>
-          )}
-        </View>
-      ) : (
-        // Dieser Zweig läuft nur für die Küche, wenn tab==='fertig' — die Bar hat keinen
-        // Tab-Umschalter mehr (siehe isBar oben), die "Offen"-Ansicht der Küche rendert
-        // immer über den showOpenColumns-Zweig oben.
+      ) : tab === 'komplett' ? (
+        // "Komplett"-Tab: eine einzelne, volle Breite nutzende Liste statt der
+        // Stationen-Aufteilung — jede Karte zeigt das GESAMTE Ticket eines Tisches, so wie
+        // es reinkam (alle Positionen aller Stationen zusammen, mit individuellem
+        // Offen/Fertig-Status je Position), unabhängig davon, ob einzelne Positionen schon
+        // in einer anderen Spalte (Offen/Vergangene Bestellungen) getrennt aufgeführt sind.
+        // `orders` (nicht `open`/`done`) als Quelle: bleibt sichtbar, bis der Tisch
+        // abgeschlossen wird, auch wenn schon alle Positionen fertig sind.
         <TicketList
-          orders={visibleOrders}
+          orders={orders}
           large={large}
           styles={styles}
           cardBackground={cardBackground}
           onToggleItem={setItemStatus}
-          onCompleteOrder={completeOrder}
-          emptyText="Noch keine erledigten Bestellungen."
+          emptyText="Keine Bestellungen."
+          columns={3}
         />
+      ) : tab === 'anzahl' ? (
+        // "Anzahl"-Tab: dieselbe Drei-Spalten-Aufteilung wie Offen/Vergangene Bestellungen,
+        // aber jede Spalte zeigt eine nach Menge sortierte Stückzahl-Liste
+        // (kitchenDishCounts, siehe aggregateOpen) statt einzelner Ticket-Karten — z.B.
+        // "5× Gyoza" auf einen Blick, statt mehrere Karten mit je 1× Gyoza durchzählen zu
+        // müssen.
+        <View style={styles.stationRow}>
+          <View style={styles.stationColumn}>
+            <StationHeader title={kitchenStations!.primary.title} count={sumCounts(kitchenDishCounts!.primary)} large={large} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.primary} large={large} styles={styles} emptyText="Keine offenen Vorspeisen." />
+          </View>
+          <View style={styles.stationDivider} />
+          <View style={styles.stationColumn}>
+            <StationHeader title={kitchenStations!.secondary.title} count={sumCounts(kitchenDishCounts!.secondary)} large={large} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.secondary} large={large} styles={styles} emptyText="Keine offenen Hauptspeisen." />
+          </View>
+          <View style={styles.stationDivider} />
+          <View style={styles.stationColumnNarrow}>
+            <StationHeader title={kitchenStations!.tertiary.title} count={sumCounts(kitchenDishCounts!.tertiary)} large={large} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.tertiary} large={large} styles={styles} emptyText="Keine offenen Barbecue-Bestellungen." />
+          </View>
+        </View>
+      ) : (
+        // Drei Spalten für die Küche, in BEIDEN Tabs: im "Offen"-Tab die noch offenen
+        // Positionen je Station (Vorspeise/Hauptspeise/Barbecue, siehe stationOpenOnly),
+        // im "Vergangene Bestellungen"-Tab jede bereits abgehakte Position als EIGENE Karte
+        // (kitchenStations.*.doneOrders, siehe stationDoneItems), sortiert nach Abhak-Zeit —
+        // eine einzelne Position wandert also sofort beim Abhaken von der Offen- in eine
+        // eigene Vergangene-Bestellungen-Karte, statt erst wenn ALLE Positionen dieser
+        // Station fertig sind, und ohne mit anderen Positionen zu einer Sammelkarte
+        // vermischt zu werden (leichter wiederzufinden, falls aus Versehen abgehakt). So
+        // blockiert eine schon fertige Position keinen Platz mehr in der Offen-Karte, den eine neu
+        // eingehende Bestellung bräuchte, und dieselbe Bestellung kann gleichzeitig als
+        // Offen- UND Vergangene-Bestellungen-Karte in derselben Station auftauchen.
+        <View style={styles.stationRow}>
+          <View style={styles.stationColumn}>
+            <StationHeader
+              title={kitchenStations!.primary.title}
+              count={tab === 'offen' ? countOpenItems(kitchenStations!.primary.openOrders) : countItems(kitchenStations!.primary.doneOrders)}
+              suffix={tab === 'offen' ? 'offen' : 'erledigt'}
+              large={large}
+              styles={styles}
+            />
+            <TicketList
+              orders={tab === 'offen' ? kitchenStations!.primary.openOrders : kitchenStations!.primary.doneOrders}
+              large={large}
+              styles={styles}
+              cardBackground={cardBackground}
+              onToggleItem={setItemStatus}
+              onCompleteOrder={completeOrder}
+              allowComplete={tab === 'offen'}
+              emptyText={tab === 'offen' ? kitchenStations!.primary.openEmptyText : kitchenStations!.primary.doneEmptyText}
+              columns={2}
+            />
+          </View>
+          <View style={styles.stationDivider} />
+          {/* Vorspeise/Hauptspeise gleich breit (stationColumn, kein stationColumnWide wie
+              bei der Bar) — Barbecue daneben bekommt bewusst weniger Raum (stationColumnNarrow,
+              siehe unten), da die Barbecue-Gerichtenamen kurz sind und eine volle Spaltenbreite
+              nur unnötig Platz verschenken würde. */}
+          <View style={styles.stationColumn}>
+            <StationHeader
+              title={kitchenStations!.secondary.title}
+              count={tab === 'offen' ? countOpenItems(kitchenStations!.secondary.openOrders) : countItems(kitchenStations!.secondary.doneOrders)}
+              suffix={tab === 'offen' ? 'offen' : 'erledigt'}
+              large={large}
+              styles={styles}
+            />
+            <TicketList
+              orders={tab === 'offen' ? kitchenStations!.secondary.openOrders : kitchenStations!.secondary.doneOrders}
+              large={large}
+              styles={styles}
+              cardBackground={cardBackground}
+              onToggleItem={setItemStatus}
+              onCompleteOrder={completeOrder}
+              allowComplete={tab === 'offen'}
+              emptyText={tab === 'offen' ? kitchenStations!.secondary.openEmptyText : kitchenStations!.secondary.doneEmptyText}
+              columns={2}
+            />
+          </View>
+          <View style={styles.stationDivider} />
+          {/* stationColumnNarrow statt stationColumn: Barbecue-Gerichtenamen sind kurz, eine
+              volle Drittel-Breite (wie Vorspeise/Hauptspeise) würde hier nur Leerraum
+              erzeugen — außerdem nur eine Karte pro Zeile (columns=1) statt zwei, sonst
+              wären die Karten in der schmaleren Spalte zu schmal zum Lesen. */}
+          <View style={styles.stationColumnNarrow}>
+            <StationHeader
+              title={kitchenStations!.tertiary.title}
+              count={tab === 'offen' ? countOpenItems(kitchenStations!.tertiary.openOrders) : countItems(kitchenStations!.tertiary.doneOrders)}
+              suffix={tab === 'offen' ? 'offen' : 'erledigt'}
+              large={large}
+              styles={styles}
+            />
+            <TicketList
+              orders={tab === 'offen' ? kitchenStations!.tertiary.openOrders : kitchenStations!.tertiary.doneOrders}
+              large={large}
+              styles={styles}
+              cardBackground={cardBackground}
+              onToggleItem={setItemStatus}
+              onCompleteOrder={completeOrder}
+              allowComplete={tab === 'offen'}
+              emptyText={tab === 'offen' ? kitchenStations!.tertiary.openEmptyText : kitchenStations!.tertiary.doneEmptyText}
+              columns={1}
+            />
+          </View>
+        </View>
       )}
     </View>
   );
@@ -389,6 +624,37 @@ export default function DeviceTicketBoard({
 // sie alle), deshalb einmal über dem ganzen Board statt einmal pro Spalte. Die Bar hat
 // dieses Vollbild-Banner nicht (siehe isBar), da ihre Vergangene-Bestellungen-Spalte immer
 // sichtbar bleiben soll.
+// Zwei-Zeilen-Beschriftung für die Küchen-Tabs (Offen/Vergangene Bestellungen/Komplett/
+// Anzahl) — Hanzi oben/primär, Deutsch darunter/sekundär, genau wie bei den Gerichtenamen
+// auf den Ticket-Karten selbst (siehe CLAUDE.md: Küchenmitarbeiter sprechen kein Deutsch,
+// Hanzi ist deshalb überall in der Küchen-Ansicht die primäre Sprache, nicht nur bei den
+// Gerichten). Nur für die Küchen-Tabs verwendet — die Bar arbeitet auf Deutsch, ihr
+// statischer Titel (barTitleText) bleibt einsprachig.
+function KitchenTabLabel({
+  hanzi,
+  de,
+  count,
+  active,
+  large,
+  styles,
+}: {
+  hanzi: string;
+  de: string;
+  count: number;
+  active: boolean;
+  large: boolean;
+  styles: BoardStyles;
+}) {
+  return (
+    <>
+      <Text style={[styles.tabTextHanzi, large && styles.tabTextHanziLarge, active && styles.tabTextActive]}>
+        {hanzi} ({count})
+      </Text>
+      <Text style={[styles.tabTextDe, large && styles.tabTextDeLarge, active && styles.tabTextActive]}>{de}</Text>
+    </>
+  );
+}
+
 function EmptyBoardBanner({ large, styles }: { large: boolean; styles: BoardStyles }) {
   return (
     <View style={styles.emptyBanner}>
@@ -426,6 +692,44 @@ function StationHeader({
         {count} {suffix}
       </Text>
     </View>
+  );
+}
+
+// Eine Spalte für den "Anzahl"-Tab (siehe kitchenDishCounts) — zeigt statt einzelner
+// Ticket-Karten eine schlichte, nach Menge sortierte Liste "5× Gyoza" pro Gericht/Variante.
+// Kein Antippen/Abhaken hier: die Stückzahl ist eine reine Zähl-Hilfe zum Nachbraten in
+// einem Rutsch, das eigentliche Abhaken passiert weiterhin über die Ticket-Karten im
+// "Offen"-Tab (sonst müsste geklärt werden, WELCHE der z.B. 5 Gyoza-Bestellungen gemeint
+// ist).
+function DishCountList({
+  entries,
+  large,
+  styles,
+  emptyText,
+}: {
+  entries: DishCount[];
+  large: boolean;
+  styles: BoardStyles;
+  emptyText: string;
+}) {
+  return (
+    <FlatList
+      data={entries}
+      keyExtractor={(entry) => entry.key}
+      contentContainerStyle={[styles.listContent, large && styles.listContentLarge]}
+      renderItem={({ item: entry }) => (
+        <View style={[styles.countCard, large && styles.countCardLarge]}>
+          <Text style={[styles.countCardCount, large && styles.countCardCountLarge]}>{entry.count}×</Text>
+          <View style={styles.countCardTextWrap}>
+            <Text style={[styles.countCardDish, large && styles.countCardDishLarge]}>{entry.dishLabel}</Text>
+            {entry.variantLabel && (
+              <Text style={[styles.countCardVariant, large && styles.countCardVariantLarge]}>{entry.variantLabel}</Text>
+            )}
+          </View>
+        </View>
+      )}
+      ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
+    />
   );
 }
 
@@ -603,9 +907,19 @@ const createStyles = (colors: ThemeColors) =>
     },
     tabsRow: { flex: 1, flexDirection: 'row' },
     tab: { flex: 1, paddingVertical: 14, alignItems: 'center' },
+    // Größerer Tab für die Küche (large-Modus) — sonst blieb "Vergangene Bestellungen"
+    // bei winziger Standardgröße, obwohl der Rest der Küchen-Ansicht extra groß ist, siehe
+    // Kommentar an der Verwendungsstelle oben.
+    tabLarge: { paddingVertical: 22 },
     tabActive: { borderBottomWidth: 3, borderBottomColor: colors.text },
-    tabText: { fontSize: 15, color: colors.textMuted },
-    tabTextActive: { color: colors.text, fontWeight: '700' },
+    // Zwei-Zeilen-Beschriftung der Küchen-Tabs (siehe KitchenTabLabel): Hanzi oben/primär
+    // und größer, Deutsch darunter/sekundär und kleiner — spiegelt dieselbe Hanzi-zuerst-
+    // Hierarchie wie bei den Gerichtenamen auf den Ticket-Karten (itemHanzi/itemDe).
+    tabTextHanzi: { fontSize: 15, color: colors.textMuted, fontWeight: '600' },
+    tabTextHanziLarge: { fontSize: 24, fontWeight: '700' },
+    tabTextDe: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
+    tabTextDeLarge: { fontSize: 15, marginTop: 2 },
+    tabTextActive: { color: colors.text },
     // Ersetzt die Tabs für die Bar (siehe isBar) — nur noch ein statischer Hinweistext,
     // da es nichts mehr umzuschalten gibt.
     barTitleText: { fontSize: 15, fontWeight: '700', color: colors.text, paddingVertical: 14, paddingLeft: 4 },
@@ -645,10 +959,14 @@ const createStyles = (colors: ThemeColors) =>
     // wegscrollt.
     stationRow: { flex: 1, flexDirection: 'row' },
     stationColumn: { flex: 1 },
-    // Breiteste der offenen Spalten: Getränke bei der Bar (mehr Bestellungen als
-    // Nachspeisen) bzw. Hauptspeise bei der Küche (Ramen/Nudeln/Reisgerichte/Suppen laufen
-    // hier zusammen, mehr als bei Vorspeise oder Barbecue allein).
+    // Nur noch für die Bar in Gebrauch (Getränke breiter als Nachspeisen, siehe isBar-
+    // Zweig) — bei der Küche sind Vorspeise/Hauptspeise gleich breit (stationColumn), nur
+    // Barbecue ist schmaler (stationColumnNarrow, siehe unten).
     stationColumnWide: { flex: 1.8 },
+    // Barbecue-Spalte der Küche — schmaler als Vorspeise/Hauptspeise, weil die
+    // Gerichtenamen dort kurz sind und eine volle Drittel-Breite nur Leerraum verschenken
+    // würde (siehe Verwendungsstelle in DeviceTicketBoard).
+    stationColumnNarrow: { flex: 0.7 },
     // Vergangene-Bestellungen-Spalte der Bar (siehe isBar) — schmaler als die beiden
     // offenen Spalten, da hier nur noch zur Kontrolle nachgeschaut wird, keine Eile mehr
     // besteht.
@@ -745,4 +1063,24 @@ const createStyles = (colors: ThemeColors) =>
     itemNoteLarge: { fontSize: 17, marginTop: 4 },
     itemDone: { textDecorationLine: 'line-through', color: colors.textFaint },
     emptyText: { textAlign: 'center', color: colors.textFaint, marginTop: 32 },
+    // Zeilen im "Anzahl"-Tab (siehe DishCountList) — bewusst schlichter/kompakter als die
+    // Ticket-Karten (kein Tisch/Zeit-Header, kein Abhaken), die fette Zahl links ist der
+    // eigentliche Blickfang.
+    countCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 14,
+      marginBottom: 12,
+      gap: 12,
+    },
+    countCardLarge: { padding: 20, borderRadius: 16, gap: 18 },
+    countCardCount: { fontSize: 24, fontWeight: '800', color: colors.text, minWidth: 44 },
+    countCardCountLarge: { fontSize: 40, minWidth: 74 },
+    countCardTextWrap: { flex: 1 },
+    countCardDish: { fontSize: 17, fontWeight: '600', color: colors.text },
+    countCardDishLarge: { fontSize: 26 },
+    countCardVariant: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+    countCardVariantLarge: { fontSize: 18, marginTop: 4 },
   });

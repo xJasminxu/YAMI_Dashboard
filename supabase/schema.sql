@@ -102,12 +102,16 @@ create table if not exists tables (
 -- Migration: note-Spalte (nachträglich hinzugefügt). Freitext-Notiz zu einem Tisch
 -- (z.B. "wartet auf Rechnung", "Allergie Erdnuss", "reserviert bis 22 Uhr") — anders als
 -- order_items.note (Notiz zu einer einzelnen Bestellposition) hängt diese am Tisch selbst,
--- editierbar direkt in TableOverviewScreen.tsx (Tischübersicht). Bewusst NICHT an eine
--- bestimmte orders-Zeile gebunden, weil ein Tisch über den Abend hinweg mehrere
--- Bestellrunden haben kann (Nachbestellung) — die Notiz soll unabhängig davon bestehen
--- bleiben. Wird nicht automatisch geleert (auch nicht bei "Tisch abschließen" oder
--- Tagesabschluss) — die Bedienung löscht/ändert sie manuell, sobald sie nicht mehr
--- zutrifft, genau wie die Tischnummer selbst über den Tagesabschluss hinweg bestehen bleibt.
+-- editierbar direkt in TableBillingScreen.tsx (Checkout-Ansicht einer Bestellung) —
+-- TableOverviewScreen.tsx (Tischübersicht) zeigt nur noch ein 📝-Indiz, ob eine Notiz
+-- existiert. Bewusst NICHT an eine bestimmte orders-Zeile gebunden, weil ein Tisch über den
+-- Abend hinweg mehrere Bestellrunden haben kann (Nachbestellung) — die Notiz soll
+-- unabhängig davon bestehen bleiben. Wird NICHT bei "Tisch abschließen" geleert (die
+-- Bedienung löscht/ändert sie manuell, sobald sie nicht mehr zutrifft), aber sehr wohl beim
+-- Tagesabschluss (RoleSelectScreen.tsx) — dort werden alle Notizen zusammen mit den
+-- Bestellungen des Tages zurückgesetzt, damit am nächsten Tag nicht noch "wartet auf
+-- Rechnung" von gestern an einem frisch besetzten Tisch hängt. Die Tischnummer selbst bleibt
+-- über den Tagesabschluss hinweg natürlich bestehen, nur die Notiz wird geleert.
 alter table tables add column if not exists note text;
 
 -- ---------------------------------------------------------------------------

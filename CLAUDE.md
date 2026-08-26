@@ -35,12 +35,33 @@ Rolle des Geräts:
 
 1. **Bestellung** (Bedienung nimmt auf) — Kategorien als Buttons, Warenkorb, Tisch wählen,
    Bestellung abschicken.
-2. **Küche** — zeigt nur Items mit `target_device = 'kitchen'`. Der "Offen"-Tab ist in drei
-   unabhängig scrollbare Spalten aufgeteilt (Vorspeise | Hauptspeise | Barbecue, siehe
-   `categories.kitchen_station`), damit eine große laufende Bestellung nicht die Positionen
-   einer anderen Spalte unter sich verschwinden lässt. Hauptspeise (Ramen, Nudeln,
-   Reisgerichte, Suppen) ist davon die breiteste Spalte, da dort die meisten Bestellungen
-   zusammenlaufen. Die "Fertig"-Historie bleibt eine einfache Liste.
+2. **Küche** — zeigt nur Items mit `target_device = 'kitchen'`. Sowohl der "Offen"- als auch
+   der "Vergangene Bestellungen"-Tab sind in drei unabhängig scrollbare Spalten aufgeteilt
+   (Vorspeise | Hauptspeise | Barbecue, siehe `categories.kitchen_station`), damit eine
+   große laufende Bestellung nicht die Positionen einer anderen Spalte unter sich
+   verschwinden lässt. Vorspeise und Hauptspeise sind gleich breit; Barbecue ist schmaler
+   (kurze Gerichtenamen, nur eine Karte pro Zeile statt zwei) — anders als bei der Bar, wo
+   stattdessen Getränke die breiteste Spalte ist (siehe unten). Innerhalb einer Station
+   wandert eine einzelne abgehakte Position sofort von der Offen- in die Vergangene-
+   Bestellungen-Karte, statt erst wenn ALLE Positionen dieser Station fertig sind — eine
+   fertige Position blockiert so keinen Platz mehr in der Offen-Karte, den eine neu
+   eingehende Bestellung bräuchte. Dieselbe Bestellung kann dadurch gleichzeitig als Offen-
+   UND Vergangene-Bestellungen-Karte in derselben Station auftauchen (z.B. 2 von 3
+   Hauptspeisen schon fertig, die dritte noch offen). Vorher gab es dafür nur eine einzige
+   "Fertig"-Liste, die eine Bestellung erst zeigte, wenn wirklich ALLE Stationen komplett
+   fertig waren — eine fertige Vorspeise blieb so lange nirgends sichtbar. Ein dritter Tab
+   "Komplett" zeigt zusätzlich jedes Tisch-Ticket unfragmentiert als eine einzelne Karte mit
+   allen Positionen aller Stationen zusammen (jede Position mit ihrem eigenen Offen/Fertig-
+   Status) — für den Fall, dass jemand den kompletten Stand eines Tisches auf einen Blick
+   braucht, statt ihn aus den einzelnen Stationen-Spalten zusammenzusuchen. Ein vierter Tab
+   "Anzahl" fasst zusätzlich alle noch offenen
+   Positionen jeder Station zu einer nach Menge sortierten Stückzahl-Liste zusammen (z.B.
+   "5× Gyoza") statt einzelner Ticket-Karten, gruppiert nach Gericht + Variante (Extras
+   fließen nicht mit ein) — damit die Küche bei vielen gleichen Bestellungen (z.B. mehrere
+   Gyoza-Bestellungen gleichzeitig) direkt in einem Rutsch nachbraten kann, ohne selbst über
+   die Ticket-Karten zu zählen. Abgehakt wird weiterhin nur über die Ticket-Karten im
+   "Offen"-Tab (oder im "Komplett"-Tab), der "Anzahl"-Tab selbst ist reine Zähl-Hilfe ohne
+   Tipp-Interaktion.
 3. **Bar** — zeigt nur Items mit `target_device = 'bar'`. Statt eines umschaltbaren
    "Fertig"-Tabs stehen hier immer drei Spalten nebeneinander: Getränke | Nachspeisen |
    Vergangene Bestellungen (siehe `categories.menu_group`), aus demselben
@@ -106,7 +127,7 @@ und tragen zusätzlich Name auf Hanzi (primär) und Deutsch (sekundär).
 Sortierung ist rein `sort_order`-Feld auf der `categories`-Tabelle, client-seitig angewendet.
 Kein Backend-Logik nötig.
 
-## Mehr-Spalten-Ansicht im "Offen"-Tab (Küche: Stationen, Bar: Getränke/Nachspeisen)
+## Mehr-Spalten-Ansicht (Küche: Stationen, Bar: Getränke/Nachspeisen)
 
 Unabhängig von `sort_order` (das nur die Reihenfolge *innerhalb* einer Ticket-Karte
 bestimmt) hat jede Küchen-Kategorie zusätzlich ein `kitchen_station`-Feld
@@ -114,9 +135,13 @@ bestimmt) hat jede Küchen-Kategorie zusätzlich ein `kitchen_station`-Feld
 Gruppierung wie oben abbildet. `DeviceTicketBoard.tsx` nutzt es, um im "Offen"-Tab der
 Küche drei separate Spalten zu rendern (Vorspeise | Hauptspeise | Barbecue), jede mit
 eigenen Ticket-Karten und eigenem Fortschritt (eine Bestellung kann in der Vorspeise-Spalte
-schon grün sein, während ihre Hauptspeise-Karte noch offen ist). Hauptspeise (Ramen,
-Nudeln, Reisgerichte, Suppen) ist die breiteste der drei Spalten, weil dort die meisten
-Bestellungen zusammenlaufen. Grund für die Aufteilung insgesamt: ohne sie verschwanden
+schon grün sein, während ihre Hauptspeise-Karte noch offen ist). Vorspeise und Hauptspeise
+sind gleich breit (`stationColumn`, kein `stationColumnWide` wie bei der Bar) — auch wenn in
+Hauptspeise (Ramen, Nudeln, Reisgerichte, Suppen) erfahrungsgemäß am meisten zusammenläuft,
+soll keine der beiden Spalten auf Kosten der anderen wachsen. Barbecue daneben ist bewusst
+schmaler (`stationColumnNarrow`, nur eine Karte pro Zeile statt zwei) — die
+Gerichtenamen dort sind kurz, eine volle Drittel-Breite würde nur Leerraum verschenken.
+Grund für die Aufteilung insgesamt: ohne sie verschwanden
 Vorspeisen und Barbecue-Bestellungen leicht unter einer bereits laufenden großen
 Hauptspeise-Bestellung, obwohl Vorspeisen oft sofort losgehen könnten und Barbecue eine
 eigene Zubereitungsstation ist. Bar-Kategorien haben `kitchen_station = null` und sind von
@@ -133,10 +158,26 @@ beiden offenen Spalten. Anders als die Küche hat die Bar zusätzlich keinen ums
 Spalte direkt daneben, damit man dafür nicht extra umschalten muss. Alle offenen Spalten
 (Küche wie Bar) zeigen ihre Ticket-Karten außerdem als Zwei-Spalten-Kartenraster
 (`columns={2}` in `TicketList`) statt einer einzelnen tief scrollenden Liste, damit auf
-einen Blick mehr offene Tickets sichtbar sind. In allen Fällen fällt eine Karte aus ihrer
-Spalte raus, sobald alle Positionen *dieser* Spalte abgehakt sind — unabhängig davon, ob
-die Bestellung insgesamt (in einer anderen Spalte) noch offen ist. Bei der Küche ist nur
-der "Offen"-Tab aufgeteilt, die "Fertig"-Historie bleibt dort eine einfache Liste.
+einen Blick mehr offene Tickets sichtbar sind. Bei der Bar fällt eine Karte aus ihrer Spalte
+raus, sobald alle Positionen *dieser* Spalte abgehakt sind (`itemsMatching`) — unabhängig
+davon, ob die Bestellung insgesamt (in einer anderen Spalte) noch offen ist. Bei der Küche
+geht das seit Kurzem noch granularer: dort fällt eine EINZELNE Position bereits beim
+Abhaken sofort aus der Offen-Karte raus, nicht erst wenn alle Positionen dieser Station
+fertig sind (`stationOpenOnly`), damit eine bereits fertige Position keinen Platz in der
+Offen-Karte blockiert, den eine neu eingehende Bestellung bräuchte. Auch der "Vergangene
+Bestellungen"-Tab ist bei der Küche in dieselben drei Stationen-Spalten aufgeteilt (nicht
+mehr nur der "Offen"-Tab): sobald eine einzelne Position einer Station abgehakt wird,
+erscheint sie im selben Moment als EIGENE Karte in der Vergangene-Bestellungen-Spalte
+derselben Station (`stationDoneItems`) — nicht zusammen mit anderen fertigen Positionen
+derselben Bestellung in einer Sammelkarte —, sortiert nach individueller Abhak-Zeit
+(neueste zuerst), unabhängig vom Fortschritt der übrigen Positionen dieser Station oder
+anderer Stationen. Grund für die Aufsplittung in einzelne Karten statt einer Sammelkarte:
+Köche haken gelegentlich aus Versehen die falsche Position ab — als eigene, ganz oben
+stehende Karte ist sofort erkennbar, welche das war, statt sie erst in einer Sammelkarte
+mit mehreren Positionen suchen zu müssen, um sie durch erneutes Antippen zurück auf "offen"
+zu setzen. Dieselbe Bestellung kann so gleichzeitig z.B. unter "Vergangene Bestellungen →
+Hauptspeise" (die schon fertige Position, als eigene Karte) UND "Offen → Hauptspeise" (die
+noch offene Position derselben Bestellung) auftauchen — beide siehe `DeviceTicketBoard.tsx`.
 
 ## Status-Workflow
 
@@ -145,10 +186,14 @@ der "Offen"-Tab aufgeteilt, die "Fertig"-Historie bleibt dort eine einfache List
 3. Tippen auf ein Item → `status = 'fertig'` (durchgestrichen dargestellt), `done_at` gesetzt.
 4. Sobald alle Items einer Bestellung **für das jeweilige Gerät** fertig sind, wandert die
    Bestellung im UI (nicht in der DB als separate Tabelle) aus "offen" in "fertig" und landet
-   in "Vergangene Bestellungen (Küche)" bzw. "(Bar)". Diese Berechnung passiert client-seitig
-   aus dem Realtime-Stream — kein Extra-Feld/Trigger nötig, außer man will Performance später
-   optimieren (dann `kitchen_done`/`bar_done` Spalten auf `orders` pflegen, die per Trigger
-   gesetzt werden, sobald alle zugehörigen `order_items` fertig sind).
+   in "Vergangene Bestellungen (Bar)". Bei der Küche passiert dieser Wechsel pro Position
+   einzeln (siehe Mehr-Spalten-Ansicht oben): sobald EINE Position einer Bestellung
+   abgehakt wird, erscheint genau diese Position sofort in "Vergangene Bestellungen →
+   [Station]", auch wenn andere Positionen derselben Station oder derselben Bestellung noch
+   offen sind. Diese Berechnung passiert client-seitig aus dem Realtime-Stream — kein
+   Extra-Feld/Trigger nötig, außer man will Performance später optimieren (dann
+   `kitchen_done`/`bar_done` Spalten auf `orders` pflegen, die per Trigger gesetzt werden,
+   sobald alle zugehörigen `order_items` fertig sind).
 
 Wichtig: Küche und Bar haben unabhängige "fertig"-Zustände für dieselbe Bestellung (ein Tisch
 kann in der Küche fertig sein, an der Bar aber noch nicht, oder umgekehrt).
@@ -157,9 +202,12 @@ kann in der Küche fertig sein, an der Bar aber noch nicht, oder umgekehrt).
 
 Button auf dem Rollenauswahl-Screen (mit Bestätigungsdialog, da destruktiv). Löscht per
 `delete` auf `orders` alle Bestellungen des Tages — `order_items` hängt per `on delete cascade`
-daran und wird automatisch mitgelöscht. `categories`, `menu_items` und `tables` bleiben
-unangetastet. Setzt damit Küche/Bar/Status wieder auf "keine offenen Bestellungen" zurück,
-ohne die Speisekarte neu einspielen zu müssen.
+daran und wird automatisch mitgelöscht. Parallel dazu wird `tables.note` (siehe Datenmodell)
+für alle Tische auf `null` gesetzt — anders als "Tisch abschließen" (dort bleibt die Notiz
+bewusst erhalten), soll der Tagesabschluss wirklich bei null anfangen. `categories`,
+`menu_items` und die Tische selbst (Tischnummern) bleiben unangetastet. Setzt damit
+Küche/Bar/Status wieder auf "keine offenen Bestellungen" zurück, ohne die Speisekarte neu
+einspielen zu müssen.
 
 ## Datenmodell
 

@@ -72,10 +72,18 @@ export default function RoleSelectScreen({ navigation }: Props) {
     // orders hat "on delete cascade" auf order_items — ein delete auf orders
     // räumt beides leer. Der Filter ist nur nötig, damit Supabase den Delete-
     // Aufruf ohne Bedingung nicht ablehnt; er matcht aber jede echte Zeile.
-    const { error } = await supabase.from('orders').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    // Parallel dazu werden auch alle Tisch-Notizen zurückgesetzt (tables.note, siehe
+    // schema.sql) — anders als "Tisch abschließen" (dort bleibt die Notiz bewusst
+    // erhalten) soll der Tagesabschluss wirklich bei null anfangen, damit am nächsten Tag
+    // nicht noch eine Notiz von gestern an einem frisch besetzten Tisch hängt.
+    const [{ error: ordersError }, { error: notesError }] = await Promise.all([
+      supabase.from('orders').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+      supabase.from('tables').update({ note: null }).neq('id', '00000000-0000-0000-0000-000000000000'),
+    ]);
 
     setClosing(false);
 
+    const error = ordersError ?? notesError;
     if (error) {
       setCloseError(error.message);
       return;
@@ -105,9 +113,8 @@ export default function RoleSelectScreen({ navigation }: Props) {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Tagesabschluss durchführen?</Text>
             <Text style={styles.modalBody}>
-              Löscht alle offenen und fertigen Bestellungen unwiderruflich, damit morgen wieder bei null
-              angefangen wird. Speisekarte und Tische bleiben erhalten. 将所有未完成和已完成的订单永久删除，以便明天从零
-              开始。菜单和餐桌信息将保留。
+              Löscht alle offenen und fertigen Bestellungen unwiderruflich und setzt alle Tisch-Notizen zurück,
+              damit morgen wieder bei null angefangen wird. Speisekarte und Tische bleiben erhalten. 将所有未完成和已完成的订单永久删除并清空所有餐桌备注，以便明天从零开始。菜单和餐桌信息将保留。
             </Text>
             <TextInput
               style={styles.pinInput}
