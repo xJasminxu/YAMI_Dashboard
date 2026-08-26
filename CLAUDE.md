@@ -39,9 +39,15 @@ Rolle des Geräts:
    der "Vergangene Bestellungen"-Tab sind in drei unabhängig scrollbare Spalten aufgeteilt
    (Vorspeise | Hauptspeise | Barbecue, siehe `categories.kitchen_station`), damit eine
    große laufende Bestellung nicht die Positionen einer anderen Spalte unter sich
-   verschwinden lässt. Vorspeise und Hauptspeise sind gleich breit; Barbecue ist schmaler
-   (kurze Gerichtenamen, nur eine Karte pro Zeile statt zwei) — anders als bei der Bar, wo
-   stattdessen Getränke die breiteste Spalte ist (siehe unten). Innerhalb einer Station
+   verschwinden lässt. Vorspeise und Hauptspeise sind standardmäßig gleich breit; Barbecue
+   ist schmaler (kurze Gerichtenamen, nur eine Karte pro Zeile statt zwei) — anders als bei
+   der Bar, wo stattdessen Getränke die breiteste Spalte ist (siehe unten). Diese Breiten
+   sind aber nur der Startzustand: die Trennlinien zwischen den Spalten lassen sich per
+   Drag verschieben (`DeviceTicketBoard.tsx`, `stationRatios`), falls z.B. eine Station an
+   einem Abend besonders viel zu tun hat — die zuletzt eingestellte Aufteilung wird pro
+   Gerät gemerkt. Zusätzlich lässt sich die Kartengröße über zwei "−"/"+"-Buttons neben der
+   Stummschalt-Glocke umschalten, falls der Koch lieber mehr Gerichte auf einen Blick sehen
+   will statt möglichst großer, aus der Distanz lesbarer Schrift. Innerhalb einer Station
    wandert eine einzelne abgehakte Position sofort von der Offen- in die Vergangene-
    Bestellungen-Karte, statt erst wenn ALLE Positionen dieser Station fertig sind — eine
    fertige Position blockiert so keinen Platz mehr in der Offen-Karte, den eine neu
@@ -66,8 +72,13 @@ Rolle des Geräts:
    "Fertig"-Tabs stehen hier immer drei Spalten nebeneinander: Getränke | Nachspeisen |
    Vergangene Bestellungen (siehe `categories.menu_group`), aus demselben
    Grund wie bei der Küche — plus die Historie immer sichtbar, damit man nicht extra
-   umschalten muss. Getränke ist die breiteste Spalte, Vergangene Bestellungen die
-   schmalste.
+   umschalten muss. Getränke ist standardmäßig die breiteste Spalte, Vergangene
+   Bestellungen die schmalste — auch hier per Drag an den Trennlinien verschiebbar, siehe
+   Küche oben. Ein "Offen"/"Anzahl"-Tab (Deutsch-only, ohne Hanzi-Zeile) schaltet zusätzlich
+   um, ob Getränke und Nachspeisen als Ticket-Karten oder — analog zum Anzahl-Tab der Küche
+   — als nach Menge sortierte Stückzahl-Liste (z.B. "5× Cola") angezeigt werden; die dritte
+   Spalte (Vergangene Bestellungen) bleibt davon unberührt und zeigt in beiden Tabs
+   weiterhin Ticket-Karten.
 4. **Status** (optional, für Bedienungen) — Übersicht aller **offenen** Tische mit
    Fortschritt (z.B. "Tisch 4: 2/5 fertig"), gespeist aus denselben Realtime-Daten wie
    Küche/Bar.

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Image, PanResponder, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import type { PanResponderInstance } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDeviceOrders, type DeviceOrderItem, type GroupedOrder } from '../hooks/useDeviceOrders';
@@ -21,6 +22,32 @@ const IMPATIENT_HONGBIN = require('../../assets/impatient_hongbin.png');
 function soundEnabledStorageKey(targetDevice: TargetDevice) {
   return `yami:sound-enabled:${targetDevice}`;
 }
+
+// Merkt sich die Kartengröße ("+"/"-"-Buttons neben der Glocke, siehe largeMode) je
+// Gerät, aus demselben Grund wie oben.
+function largeModeStorageKey(targetDevice: TargetDevice) {
+  return `yami:large-mode:${targetDevice}`;
+}
+
+// Merkt sich die per Drag an den Trennlinien eingestellten Spaltenbreiten der Drei-
+// Spalten-Ansicht (siehe stationRatios) — eigener Key je Gerät, da Küche (Vorspeise/
+// Hauptspeise/Barbecue) und Bar (Getränke/Nachspeisen/Vergangene Bestellungen) fachlich
+// unterschiedliche Spalten sind, auch wenn sie denselben Drag-Mechanismus teilen.
+function stationRatiosStorageKey(targetDevice: TargetDevice) {
+  return `yami:station-ratios:${targetDevice}`;
+}
+
+// Standardbreiten, bevor zum ersten Mal gezogen wurde — spiegeln die bisherigen festen
+// flex-Werte: bei der Küche Vorspeise/Hauptspeise gleich breit, Barbecue schmaler (kurze
+// Gerichtenamen); bei der Bar Getränke am breitesten (mehr Bestellungen als Nachspeisen),
+// Vergangene Bestellungen am schmalsten (nur zur Kontrolle, keine Eile mehr).
+function defaultStationRatios(targetDevice: TargetDevice): [number, number, number] {
+  return targetDevice === 'kitchen' ? [1, 1, 0.7] : [1.8, 1, 0.6];
+}
+
+// Kein Trenner darf eine Spalte komplett verschwinden lassen — Mindestanteil an der
+// gemeinsamen Breitensumme der beiden durch einen Trenner verbundenen Spalten.
+const MIN_STATION_RATIO = 0.35;
 
 // neu = noch nichts abgehakt, angefangen = teilweise fertig, fertig = alles abgehakt.
 type OrderProgress = 'neu' | 'angefangen' | 'fertig';
@@ -230,6 +257,106 @@ export default function DeviceTicketBoard({
     });
   }
 
+  // Kartengröße — startet beim vom Screen übergebenen `large`-Wert (Küche groß für
+  // Distanzlesbarkeit, Bar normal), ist danach aber per "−"/"+"-Button in der Kopfzeile
+  // umschaltbar, falls der Koch z.B. lieber mehr Gerichte auf einen Blick sehen will statt
+  // große Schrift. Persistiert wie soundEnabled je Gerät.
+  const [largeMode, setLargeMode] = useState(large);
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(largeModeStorageKey(targetDevice)).then((stored) => {
+      if (!cancelled && stored !== null) setLargeMode(stored === '1');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetDevice]);
+
+  function setCardSize(next: boolean) {
+    setLargeMode(next);
+    AsyncStorage.setItem(largeModeStorageKey(targetDevice), next ? '1' : '0');
+  }
+
+  // Per Drag an den Trennlinien einstellbare Breiten der Drei-Spalten-Ansicht — bei der
+  // Küche Vorspeise/Hauptspeise/Barbecue, bei der Bar Getränke/Nachspeisen/Vergangene
+  // Bestellungen. Ratios statt fixer Pixelbreiten, damit sich das Verhältnis über
+  // Geräteneustarts/Bildschirmgrößen hinweg gleich verhält; ratiosRef hält den Wert
+  // zusätzlich für die PanResponder-Callbacks aktuell, ohne dass die Responder bei jedem
+  // Re-Render (z.B. durch neue Bestellungen via Realtime) neu erzeugt werden müssten —
+  // das würde eine gerade laufende Drag-Geste abbrechen.
+  const [stationRatios, setStationRatios] = useState<[number, number, number]>(() =>
+    defaultStationRatios(targetDevice)
+  );
+  const ratiosRef = useRef(stationRatios);
+  ratiosRef.current = stationRatios;
+  const rowWidthRef = useRef(0);
+  const dragStartRatiosRef = useRef(stationRatios);
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(stationRatiosStorageKey(targetDevice)).then((stored) => {
+      if (cancelled || !stored) return;
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length === 3 && parsed.every((n) => typeof n === 'number')) {
+          setStationRatios(parsed as [number, number, number]);
+        }
+      } catch {
+        // Beschädigter/alter Storage-Wert — einfach bei den Standardbreiten bleiben.
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetDevice]);
+
+  function handleStationRowLayout(width: number) {
+    rowWidthRef.current = width;
+  }
+
+  // Ein PanResponder pro Trenner (0 = erste|zweite Spalte, 1 = zweite|dritte Spalte) —
+  // verschiebt beim Ziehen Breitenanteile zwischen genau den beiden angrenzenden Spalten,
+  // die Summe der beiden bleibt dabei gleich, andere Spalten sind unberührt. Per
+  // useRef-Lazy-Init einmalig erzeugt (nicht bei jedem Render neu), damit eine laufende
+  // Geste nicht durch einen Re-Render (z.B. neue Bestellung via Realtime) unterbrochen
+  // wird — die Callbacks lesen den aktuellen Stand stattdessen über die Refs oben.
+  const dividerRespondersRef = useRef<Record<0 | 1, PanResponderInstance> | null>(null);
+  if (!dividerRespondersRef.current) {
+    function makeDividerResponder(index: 0 | 1): PanResponderInstance {
+      return PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_evt, gesture) => Math.abs(gesture.dx) > 3,
+        onPanResponderGrant: () => {
+          dragStartRatiosRef.current = ratiosRef.current;
+        },
+        onPanResponderMove: (_evt, gesture) => {
+          const width = rowWidthRef.current;
+          if (!width) return;
+          const start = dragStartRatiosRef.current;
+          const pairSum = start[index] + start[index + 1];
+          // dx in Pixel → Anteil an der gemeinsamen Breitensumme der beiden Spalten,
+          // relativ zur Gesamtbreite der Reihe (nicht nur der beiden Spalten selbst,
+          // deren tatsächliche Pixelbreite von den Ratios aller drei Spalten abhängt).
+          const totalRatio = start[0] + start[1] + start[2];
+          const deltaRatio = (gesture.dx * totalRatio) / width;
+          const maxForIndex = pairSum - MIN_STATION_RATIO;
+          const newIndexRatio = Math.max(MIN_STATION_RATIO, Math.min(maxForIndex, start[index] + deltaRatio));
+          const next = [...start] as [number, number, number];
+          next[index] = newIndexRatio;
+          next[index + 1] = pairSum - newIndexRatio;
+          setStationRatios(next);
+        },
+        onPanResponderRelease: () => {
+          AsyncStorage.setItem(stationRatiosStorageKey(targetDevice), JSON.stringify(ratiosRef.current));
+        },
+      });
+    }
+
+    dividerRespondersRef.current = { 0: makeDividerResponder(0), 1: makeDividerResponder(1) };
+  }
+  const dividerResponders = dividerRespondersRef.current;
+
   // Hakt alle noch offenen Positionen einer Karte auf einmal ab (X-Button oder
   // Wisch-Geste, siehe TicketList) statt jedes Item einzeln antippen zu müssen — z.B.
   // wenn die Bedienung mündlich Bescheid gibt, dass ein Tisch storniert wurde, oder die
@@ -249,14 +376,16 @@ export default function DeviceTicketBoard({
     return { open, done };
   }, [orders]);
 
-  // Bar zeigt Vergangene Bestellungen nicht mehr in einem umschaltbaren Tab, sondern immer
-  // zusätzlich als dritte, schmalere Spalte neben Getränke/Nachspeisen (siehe isBar unten)
-  // — die Küche behält ihre Tab-Aufteilung (Offen/Fertig).
+  // Bar zeigt Vergangene Bestellungen nicht in einem umschaltbaren Tab, sondern immer
+  // zusätzlich als dritte, schmalere Spalte neben Getränke/Nachspeisen (siehe isBar unten).
+  // "Offen"/"Anzahl" bleiben aber ein Tab-Umschalter (`tab`-State, geteilt mit der Küche) —
+  // er entscheidet nur, ob die ersten beiden Spalten Ticket-Karten oder eine Stückzahl-Liste
+  // zeigen (siehe barDishCounts unten), die dritte Spalte bleibt davon unberührt.
   const isBar = targetDevice === 'bar';
 
-  // Bar-Spalten (Getränke | Nachspeisen), unverändert immer offen-basiert — die Bar hat
-  // keinen Tab-Umschalter, ihre "Vergangene Bestellungen"-Spalte wird separat weiter unten
-  // aus `done` gespeist (ganze Bestellung fertig, siehe isBar-Zweig im JSX).
+  // Bar-Spalten (Getränke | Nachspeisen) für den "Offen"-Tab, immer offen-basiert — ihre
+  // "Vergangene Bestellungen"-Spalte wird separat weiter unten aus `done` gespeist (ganze
+  // Bestellung fertig, siehe isBar-Zweig im JSX) und bleibt in beiden Bar-Tabs gleich.
   const barColumns = useMemo(() => {
     if (!isBar) return null;
     return {
@@ -266,6 +395,17 @@ export default function DeviceTicketBoard({
       secondaryOrders: itemsMatching(open, (item) => item.menu_item.category.menu_group === 'nachspeisen'),
       secondaryTitle: 'Nachspeisen',
       secondaryEmptyText: 'Keine offenen Nachspeisen.',
+    };
+  }, [open, isBar]);
+
+  // Stückzahl-Zusammenfassung für den "Anzahl"-Tab der Bar (siehe kitchenDishCounts) —
+  // dieselbe Getränke/Nachspeisen-Aufteilung wie barColumns oben, aber als sortierte
+  // "5× Cola"-Liste statt einzelner Ticket-Karten.
+  const barDishCounts = useMemo(() => {
+    if (!isBar) return null;
+    return {
+      primary: aggregateOpen(open, (item) => item.menu_item.category.menu_group === 'getraenke'),
+      secondary: aggregateOpen(open, (item) => item.menu_item.category.menu_group === 'nachspeisen'),
     };
   }, [open, isBar]);
 
@@ -363,14 +503,29 @@ export default function DeviceTicketBoard({
     <View style={styles.container}>
       <View style={styles.tabBar}>
         {isBar ? (
-          // Kein Tab-Umschalter mehr für die Bar — Vergangene Bestellungen stehen immer
-          // als eigene Spalte daneben (siehe unten), hier nur noch ein statischer Titel.
+          // Vergangene Bestellungen stehen für die Bar immer als eigene Spalte daneben
+          // (siehe isBar-Zweig unten), brauchen also keinen eigenen Tab mehr — "Offen" und
+          // "Anzahl" schalten aber weiterhin um, ob Getränke/Nachspeisen als Ticket-Karten
+          // oder als Stückzahl-Liste (z.B. "5× Cola", siehe barDishCounts) angezeigt werden.
+          // Deutsch-only, ohne Hanzi-Zeile — die Bar-Belegschaft spricht Deutsch, anders als
+          // die Küche (siehe CLAUDE.md).
           <View style={styles.tabsRow}>
-            <Text style={styles.barTitleText}>Bar — {open.length} offen</Text>
+            <TouchableOpacity
+              style={[styles.tab, tab === 'offen' && styles.tabActive]}
+              onPress={() => setTab('offen')}
+            >
+              <BarTabLabel label="Offen" count={open.length} active={tab === 'offen'} large={largeMode} styles={styles} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, tab === 'anzahl' && styles.tabActive]}
+              onPress={() => setTab('anzahl')}
+            >
+              <BarTabLabel label="Anzahl" count={countOpenItems(open)} active={tab === 'anzahl'} large={largeMode} styles={styles} />
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.tabsRow}>
-            {/* large && styles.tabLarge/tabTextHanziLarge/tabTextDeLarge: die Küche läuft im
+            {/* largeMode && styles.tabLarge/tabTextHanziLarge/tabTextDeLarge: die Küche läuft im
                 "large"-Modus (aus der Distanz lesbar, siehe DeviceTicketBoard-Kommentar
                 oben) — vorher hatte nur der Rest der Karten/Spalten eine große Variante, der
                 Tab selbst blieb bei 15px/kompakter Höhe. Dadurch war "Vergangene
@@ -382,13 +537,13 @@ export default function DeviceTicketBoard({
                 Hierarchie wie bei den Gerichtenamen, weil die Küchenmitarbeiter kein
                 Deutsch sprechen (siehe CLAUDE.md). */}
             <TouchableOpacity
-              style={[styles.tab, large && styles.tabLarge, tab === 'offen' && styles.tabActive]}
+              style={[styles.tab, largeMode && styles.tabLarge, tab === 'offen' && styles.tabActive]}
               onPress={() => setTab('offen')}
             >
-              <KitchenTabLabel hanzi="待做" de="Offen" count={open.length} active={tab === 'offen'} large={large} styles={styles} />
+              <KitchenTabLabel hanzi="待做" de="Offen" count={open.length} active={tab === 'offen'} large={largeMode} styles={styles} />
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.tab, large && styles.tabLarge, tab === 'fertig' && styles.tabActive]}
+              style={[styles.tab, largeMode && styles.tabLarge, tab === 'fertig' && styles.tabActive]}
               onPress={() => setTab('fertig')}
             >
               <KitchenTabLabel
@@ -396,7 +551,7 @@ export default function DeviceTicketBoard({
                 de="Vergangene Bestellungen"
                 count={kitchenDoneCardCount}
                 active={tab === 'fertig'}
-                large={large}
+                large={largeMode}
                 styles={styles}
               />
             </TouchableOpacity>
@@ -406,16 +561,16 @@ export default function DeviceTicketBoard({
                 aufsplitten. Für den Überblick, wenn jemand den ganzen Stand eines Tisches
                 auf einen Blick braucht, statt ihn aus mehreren Spalten zusammenzusuchen. */}
             <TouchableOpacity
-              style={[styles.tab, large && styles.tabLarge, tab === 'komplett' && styles.tabActive]}
+              style={[styles.tab, largeMode && styles.tabLarge, tab === 'komplett' && styles.tabActive]}
               onPress={() => setTab('komplett')}
             >
-              <KitchenTabLabel hanzi="整单" de="Komplett" count={orders.length} active={tab === 'komplett'} large={large} styles={styles} />
+              <KitchenTabLabel hanzi="整单" de="Komplett" count={orders.length} active={tab === 'komplett'} large={largeMode} styles={styles} />
             </TouchableOpacity>
             {/* "Anzahl"-Tab: fasst alle offenen Positionen zu einer Stückzahl-Liste zusammen
                 (z.B. "5× Gyoza"), damit man bei vielen gleichen Bestellungen nicht selbst
                 über die Ticket-Karten zählen muss, siehe aggregateOpen/kitchenDishCounts. */}
             <TouchableOpacity
-              style={[styles.tab, large && styles.tabLarge, tab === 'anzahl' && styles.tabActive]}
+              style={[styles.tab, largeMode && styles.tabLarge, tab === 'anzahl' && styles.tabActive]}
               onPress={() => setTab('anzahl')}
             >
               <KitchenTabLabel
@@ -423,18 +578,37 @@ export default function DeviceTicketBoard({
                 de="Anzahl"
                 count={countOpenItems(open)}
                 active={tab === 'anzahl'}
-                large={large}
+                large={largeMode}
                 styles={styles}
               />
             </TouchableOpacity>
           </View>
         )}
+        {/* "−"/"+"-Buttons für die Kartengröße (siehe largeMode/setCardSize) — z.B. wenn der
+            Koch lieber mehr Gerichte auf einen Blick sehen will statt große, aus der Distanz
+            lesbare Schrift. */}
+        <View style={styles.cardSizeButtons}>
+          <TouchableOpacity
+            style={[styles.cardSizeButton, largeMode && styles.bellButtonLarge]}
+            onPress={() => setCardSize(false)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.cardSizeButtonText, largeMode && styles.bellButtonTextLarge]}>−</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.cardSizeButton, largeMode && styles.bellButtonLarge]}
+            onPress={() => setCardSize(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.cardSizeButtonText, largeMode && styles.bellButtonTextLarge]}>+</Text>
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity
-          style={[styles.bellButton, large && styles.bellButtonLarge]}
+          style={[styles.bellButton, largeMode && styles.bellButtonLarge]}
           onPress={toggleSound}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={[styles.bellButtonText, large && styles.bellButtonTextLarge]}>
+          <Text style={[styles.bellButtonText, largeMode && styles.bellButtonTextLarge]}>
             {soundEnabled ? '🔔' : '🔕'}
           </Text>
         </TouchableOpacity>
@@ -445,51 +619,77 @@ export default function DeviceTicketBoard({
         // soll immer sichtbar bleiben, auch wenn gerade nichts offen ist — ein Vollbild-
         // Banner würde sie verdecken. Leere Getränke-/Nachspeisen-Spalten zeigen stattdessen
         // einfach ihren eigenen emptyText.
-        <View style={styles.stationRow}>
-          <View style={styles.stationColumnWide}>
-            <StationHeader title={barColumns!.primaryTitle} count={countOpenItems(barColumns!.primaryOrders)} large={large} styles={styles} />
-            <TicketList
-              orders={barColumns!.primaryOrders}
-              large={large}
+        <View
+          style={styles.stationRow}
+          onLayout={(e) => handleStationRowLayout(e.nativeEvent.layout.width)}
+        >
+          <View style={{ flex: stationRatios[0] }}>
+            <StationHeader
+              title={barColumns!.primaryTitle}
+              count={tab === 'anzahl' ? sumCounts(barDishCounts!.primary) : countOpenItems(barColumns!.primaryOrders)}
+              large={largeMode}
               styles={styles}
-              cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
-              onCompleteOrder={completeOrder}
-              allowComplete
-              emptyText={barColumns!.primaryEmptyText}
-              columns={2}
             />
+            {tab === 'anzahl' ? (
+              <DishCountList entries={barDishCounts!.primary} large={largeMode} styles={styles} emptyText={barColumns!.primaryEmptyText} />
+            ) : (
+              <TicketList
+                orders={barColumns!.primaryOrders}
+                large={largeMode}
+                styles={styles}
+                cardBackground={cardBackground}
+                onToggleItem={setItemStatus}
+                onCompleteOrder={completeOrder}
+                allowComplete
+                emptyText={barColumns!.primaryEmptyText}
+                columns={2}
+              />
+            )}
           </View>
-          <View style={styles.stationDivider} />
-          <View style={styles.stationColumn}>
-            <StationHeader title={barColumns!.secondaryTitle} count={countOpenItems(barColumns!.secondaryOrders)} large={large} styles={styles} />
-            <TicketList
-              orders={barColumns!.secondaryOrders}
-              large={large}
+          {/* Trennlinie zwischen Getränke/Nachspeisen per Drag verschiebbar (siehe
+              dividerResponders/stationRatios) — die Breiten (Getränke standardmäßig am
+              breitesten, Vergangene Bestellungen am schmalsten) sind damit nur noch der
+              Startzustand, nicht mehr fix. */}
+          <StationDividerHandle responder={dividerResponders[0]} styles={styles} />
+          <View style={{ flex: stationRatios[1] }}>
+            <StationHeader
+              title={barColumns!.secondaryTitle}
+              count={tab === 'anzahl' ? sumCounts(barDishCounts!.secondary) : countOpenItems(barColumns!.secondaryOrders)}
+              large={largeMode}
               styles={styles}
-              cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
-              onCompleteOrder={completeOrder}
-              allowComplete
-              emptyText={barColumns!.secondaryEmptyText}
-              columns={2}
             />
+            {tab === 'anzahl' ? (
+              <DishCountList entries={barDishCounts!.secondary} large={largeMode} styles={styles} emptyText={barColumns!.secondaryEmptyText} />
+            ) : (
+              <TicketList
+                orders={barColumns!.secondaryOrders}
+                large={largeMode}
+                styles={styles}
+                cardBackground={cardBackground}
+                onToggleItem={setItemStatus}
+                onCompleteOrder={completeOrder}
+                allowComplete
+                emptyText={barColumns!.secondaryEmptyText}
+                columns={2}
+              />
+            )}
           </View>
-          <View style={styles.stationDivider} />
-          <View style={styles.pastColumn}>
-            <StationHeader title="Vergangene Bestellungen" count={done.length} suffix="erledigt" large={large} styles={styles} />
+          <StationDividerHandle responder={dividerResponders[1]} styles={styles} />
+          <View style={{ flex: stationRatios[2] }}>
+            <StationHeader title="Vergangene Bestellungen" count={done.length} suffix="erledigt" large={largeMode} styles={styles} />
             <TicketList
               orders={done}
-              large={large}
+              large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
+              showFinishedAt
               emptyText="Noch keine erledigten Bestellungen."
             />
           </View>
         </View>
       ) : tab === 'offen' && open.length === 0 ? (
-        <EmptyBoardBanner large={large} styles={styles} />
+        <EmptyBoardBanner large={largeMode} styles={styles} />
       ) : tab === 'komplett' ? (
         // "Komplett"-Tab: eine einzelne, volle Breite nutzende Liste statt der
         // Stationen-Aufteilung — jede Karte zeigt das GESAMTE Ticket eines Tisches, so wie
@@ -500,7 +700,7 @@ export default function DeviceTicketBoard({
         // abgeschlossen wird, auch wenn schon alle Positionen fertig sind.
         <TicketList
           orders={orders}
-          large={large}
+          large={largeMode}
           styles={styles}
           cardBackground={cardBackground}
           onToggleItem={setItemStatus}
@@ -513,20 +713,23 @@ export default function DeviceTicketBoard({
         // (kitchenDishCounts, siehe aggregateOpen) statt einzelner Ticket-Karten — z.B.
         // "5× Gyoza" auf einen Blick, statt mehrere Karten mit je 1× Gyoza durchzählen zu
         // müssen.
-        <View style={styles.stationRow}>
-          <View style={styles.stationColumn}>
-            <StationHeader title={kitchenStations!.primary.title} count={sumCounts(kitchenDishCounts!.primary)} large={large} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.primary} large={large} styles={styles} emptyText="Keine offenen Vorspeisen." />
+        <View
+          style={styles.stationRow}
+          onLayout={(e) => handleStationRowLayout(e.nativeEvent.layout.width)}
+        >
+          <View style={{ flex: stationRatios[0] }}>
+            <StationHeader title={kitchenStations!.primary.title} count={sumCounts(kitchenDishCounts!.primary)} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.primary} large={largeMode} styles={styles} emptyText="Keine offenen Vorspeisen." />
           </View>
-          <View style={styles.stationDivider} />
-          <View style={styles.stationColumn}>
-            <StationHeader title={kitchenStations!.secondary.title} count={sumCounts(kitchenDishCounts!.secondary)} large={large} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.secondary} large={large} styles={styles} emptyText="Keine offenen Hauptspeisen." />
+          <StationDividerHandle responder={dividerResponders[0]} styles={styles} />
+          <View style={{ flex: stationRatios[1] }}>
+            <StationHeader title={kitchenStations!.secondary.title} count={sumCounts(kitchenDishCounts!.secondary)} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.secondary} large={largeMode} styles={styles} emptyText="Keine offenen Hauptspeisen." />
           </View>
-          <View style={styles.stationDivider} />
-          <View style={styles.stationColumnNarrow}>
-            <StationHeader title={kitchenStations!.tertiary.title} count={sumCounts(kitchenDishCounts!.tertiary)} large={large} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.tertiary} large={large} styles={styles} emptyText="Keine offenen Barbecue-Bestellungen." />
+          <StationDividerHandle responder={dividerResponders[1]} styles={styles} />
+          <View style={{ flex: stationRatios[2] }}>
+            <StationHeader title={kitchenStations!.tertiary.title} count={sumCounts(kitchenDishCounts!.tertiary)} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.tertiary} large={largeMode} styles={styles} emptyText="Keine offenen Barbecue-Bestellungen." />
           </View>
         </View>
       ) : (
@@ -541,73 +744,75 @@ export default function DeviceTicketBoard({
         // blockiert eine schon fertige Position keinen Platz mehr in der Offen-Karte, den eine neu
         // eingehende Bestellung bräuchte, und dieselbe Bestellung kann gleichzeitig als
         // Offen- UND Vergangene-Bestellungen-Karte in derselben Station auftauchen.
-        <View style={styles.stationRow}>
-          <View style={styles.stationColumn}>
+        <View
+          style={styles.stationRow}
+          onLayout={(e) => handleStationRowLayout(e.nativeEvent.layout.width)}
+        >
+          <View style={{ flex: stationRatios[0] }}>
             <StationHeader
               title={kitchenStations!.primary.title}
               count={tab === 'offen' ? countOpenItems(kitchenStations!.primary.openOrders) : countItems(kitchenStations!.primary.doneOrders)}
               suffix={tab === 'offen' ? 'offen' : 'erledigt'}
-              large={large}
+              large={largeMode}
               styles={styles}
             />
             <TicketList
               orders={tab === 'offen' ? kitchenStations!.primary.openOrders : kitchenStations!.primary.doneOrders}
-              large={large}
+              large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
               onCompleteOrder={completeOrder}
               allowComplete={tab === 'offen'}
+              showFinishedAt={tab === 'fertig'}
               emptyText={tab === 'offen' ? kitchenStations!.primary.openEmptyText : kitchenStations!.primary.doneEmptyText}
               columns={2}
             />
           </View>
-          <View style={styles.stationDivider} />
-          {/* Vorspeise/Hauptspeise gleich breit (stationColumn, kein stationColumnWide wie
-              bei der Bar) — Barbecue daneben bekommt bewusst weniger Raum (stationColumnNarrow,
-              siehe unten), da die Barbecue-Gerichtenamen kurz sind und eine volle Spaltenbreite
-              nur unnötig Platz verschenken würde. */}
-          <View style={styles.stationColumn}>
+          {/* Trennlinie zwischen Vorspeise/Hauptspeise per Drag verschiebbar (siehe
+              dividerResponders/stationRatios) — die Breiten (Vorspeise/Hauptspeise
+              standardmäßig gleich breit, Barbecue schmaler, da kurze Gerichtenamen) sind
+              damit nur noch der Startzustand, nicht mehr fix. */}
+          <StationDividerHandle responder={dividerResponders[0]} styles={styles} />
+          <View style={{ flex: stationRatios[1] }}>
             <StationHeader
               title={kitchenStations!.secondary.title}
               count={tab === 'offen' ? countOpenItems(kitchenStations!.secondary.openOrders) : countItems(kitchenStations!.secondary.doneOrders)}
               suffix={tab === 'offen' ? 'offen' : 'erledigt'}
-              large={large}
+              large={largeMode}
               styles={styles}
             />
             <TicketList
               orders={tab === 'offen' ? kitchenStations!.secondary.openOrders : kitchenStations!.secondary.doneOrders}
-              large={large}
+              large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
               onCompleteOrder={completeOrder}
               allowComplete={tab === 'offen'}
+              showFinishedAt={tab === 'fertig'}
               emptyText={tab === 'offen' ? kitchenStations!.secondary.openEmptyText : kitchenStations!.secondary.doneEmptyText}
               columns={2}
             />
           </View>
-          <View style={styles.stationDivider} />
-          {/* stationColumnNarrow statt stationColumn: Barbecue-Gerichtenamen sind kurz, eine
-              volle Drittel-Breite (wie Vorspeise/Hauptspeise) würde hier nur Leerraum
-              erzeugen — außerdem nur eine Karte pro Zeile (columns=1) statt zwei, sonst
-              wären die Karten in der schmaleren Spalte zu schmal zum Lesen. */}
-          <View style={styles.stationColumnNarrow}>
+          <StationDividerHandle responder={dividerResponders[1]} styles={styles} />
+          <View style={{ flex: stationRatios[2] }}>
             <StationHeader
               title={kitchenStations!.tertiary.title}
               count={tab === 'offen' ? countOpenItems(kitchenStations!.tertiary.openOrders) : countItems(kitchenStations!.tertiary.doneOrders)}
               suffix={tab === 'offen' ? 'offen' : 'erledigt'}
-              large={large}
+              large={largeMode}
               styles={styles}
             />
             <TicketList
               orders={tab === 'offen' ? kitchenStations!.tertiary.openOrders : kitchenStations!.tertiary.doneOrders}
-              large={large}
+              large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
               onToggleItem={setItemStatus}
               onCompleteOrder={completeOrder}
               allowComplete={tab === 'offen'}
+              showFinishedAt={tab === 'fertig'}
               emptyText={tab === 'offen' ? kitchenStations!.tertiary.openEmptyText : kitchenStations!.tertiary.doneEmptyText}
               columns={1}
             />
@@ -655,6 +860,26 @@ function KitchenTabLabel({
   );
 }
 
+function BarTabLabel({
+  label,
+  count,
+  active,
+  large,
+  styles,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  large: boolean;
+  styles: BoardStyles;
+}) {
+  return (
+    <Text style={[styles.tabTextHanzi, large && styles.tabTextHanziLarge, active && styles.tabTextActive]}>
+      {label} ({count})
+    </Text>
+  );
+}
+
 function EmptyBoardBanner({ large, styles }: { large: boolean; styles: BoardStyles }) {
   return (
     <View style={styles.emptyBanner}>
@@ -691,6 +916,18 @@ function StationHeader({
       <Text style={[styles.stationHeaderCount, large && styles.stationHeaderCountLarge]}>
         {count} {suffix}
       </Text>
+    </View>
+  );
+}
+
+// Draggable Trennlinie zwischen zwei Küchen-Stationen-Spalten (siehe
+// dividerResponders/stationRatios in DeviceTicketBoard) — eine breitere, unsichtbare
+// Grifffläche um die eigentlich sichtbare 1px-Linie herum, damit sie sich auch mit einem
+// Kochfinger treffsicher greifen lässt, ohne selbst breit auszusehen.
+function StationDividerHandle({ responder, styles }: { responder: PanResponderInstance; styles: BoardStyles }) {
+  return (
+    <View style={styles.stationDividerHandle} {...responder.panHandlers}>
+      <View style={styles.stationDividerLine} />
     </View>
   );
 }
@@ -747,6 +984,7 @@ function TicketList({
   allowComplete = false,
   emptyText,
   columns = 1,
+  showFinishedAt = false,
 }: {
   orders: GroupedOrder[];
   large: boolean;
@@ -760,6 +998,12 @@ function TicketList({
   // nebeneinander statt einer einzelnen Spalte, damit auf einen Blick mehr offene
   // Tickets sichtbar sind, ohne scrollen zu müssen.
   columns?: number;
+  // true für die "Vergangene Bestellungen"-Listen (Küchen-Stationen im "Fertig"-Tab, die
+  // Vergangene-Bestellungen-Spalte der Bar): zeigt die Fertig-Zeit (spätestes done_at der
+  // Karte, siehe latestDoneAt) statt der Bestellzeit — dort interessiert, wann abgehakt
+  // wurde, nicht wann bestellt wurde. Bestimmt nur die Anzeige, die Sortierung nach
+  // Fertig-Zeit passiert schon vorher beim Aufbau von `orders` (stationDoneItems/`done`).
+  showFinishedAt?: boolean;
 }) {
   return (
     <FlatList
@@ -769,12 +1013,17 @@ function TicketList({
       columnWrapperStyle={columns > 1 ? styles.cardRow : undefined}
       contentContainerStyle={[styles.listContent, large && styles.listContentLarge]}
       renderItem={({ item: order }) => {
+        const finishedAtMs = showFinishedAt ? latestDoneAt(order) : 0;
         const card = (
           <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
             <View style={styles.cardHeader}>
               <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>Tisch {order.table.number}</Text>
               <View style={styles.cardHeaderRight}>
-                <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>{formatTime(order.createdAt)}</Text>
+                <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>
+                  {showFinishedAt && finishedAtMs > 0
+                    ? `Fertig ${formatTime(new Date(finishedAtMs).toISOString())}`
+                    : formatTime(order.createdAt)}
+                </Text>
                 {allowComplete && (
                   <TouchableOpacity
                     onPress={() => onCompleteOrder?.(order)}
@@ -923,6 +1172,17 @@ const createStyles = (colors: ThemeColors) =>
     // Ersetzt die Tabs für die Bar (siehe isBar) — nur noch ein statischer Hinweistext,
     // da es nichts mehr umzuschalten gibt.
     barTitleText: { fontSize: 15, fontWeight: '700', color: colors.text, paddingVertical: 14, paddingLeft: 4 },
+    // "−"/"+"-Buttons für die Kartengröße (siehe largeMode/setCardSize) — dieselbe
+    // Größenanpassung (bellButtonLarge/bellButtonTextLarge) wie die Glocke daneben, damit
+    // alle drei Kopfzeilen-Buttons in beiden Kartengrößen gleich aussehen.
+    cardSizeButtons: { flexDirection: 'row', gap: 4 },
+    cardSizeButton: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cardSizeButtonText: { fontSize: 22, fontWeight: '700', color: colors.textSecondary },
     bellButton: { paddingHorizontal: 14, paddingVertical: 10 },
     bellButtonLarge: { paddingHorizontal: 18, paddingVertical: 14 },
     bellButtonText: { fontSize: 22 },
@@ -954,24 +1214,24 @@ const createStyles = (colors: ThemeColors) =>
     emptyBannerImage: { width: 420, aspectRatio: 3 / 4 },
     emptyBannerImageLarge: { width: 280 },
     // Mehr-Spalten-Ansicht im "Offen"-Tab (Küche: Vorspeise | Hauptspeise | Barbecue, Bar:
-    // Getränke | Nachspeisen), jede Spalte unabhängig scrollbar, damit eine große laufende
-    // Bestellung nicht mehr die neu eingegangenen Positionen einer anderen Spalte
-    // wegscrollt.
+    // Getränke | Nachspeisen | Vergangene Bestellungen), jede Spalte unabhängig scrollbar,
+    // damit eine große laufende Bestellung nicht mehr die neu eingegangenen Positionen
+    // einer anderen Spalte wegscrollt. Die Spaltenbreiten selbst sind keine festen
+    // Styles mehr, sondern kommen per Drag-verschiebbarem stationRatios-State als
+    // inline-flex (siehe StationDividerHandle) — Start-/Mindestbreiten dafür in
+    // defaultStationRatios/MIN_STATION_RATIO weiter oben.
     stationRow: { flex: 1, flexDirection: 'row' },
-    stationColumn: { flex: 1 },
-    // Nur noch für die Bar in Gebrauch (Getränke breiter als Nachspeisen, siehe isBar-
-    // Zweig) — bei der Küche sind Vorspeise/Hauptspeise gleich breit (stationColumn), nur
-    // Barbecue ist schmaler (stationColumnNarrow, siehe unten).
-    stationColumnWide: { flex: 1.8 },
-    // Barbecue-Spalte der Küche — schmaler als Vorspeise/Hauptspeise, weil die
-    // Gerichtenamen dort kurz sind und eine volle Drittel-Breite nur Leerraum verschenken
-    // würde (siehe Verwendungsstelle in DeviceTicketBoard).
-    stationColumnNarrow: { flex: 0.7 },
-    // Vergangene-Bestellungen-Spalte der Bar (siehe isBar) — schmaler als die beiden
-    // offenen Spalten, da hier nur noch zur Kontrolle nachgeschaut wird, keine Eile mehr
-    // besteht.
-    pastColumn: { flex: 0.6 },
-    stationDivider: { width: 1, backgroundColor: colors.border },
+    // Draggable Trennlinie zwischen zwei Stationen-/Bar-Spalten (siehe
+    // StationDividerHandle). Eigene 18px breite Grifffläche statt einer schmalen 1px-Linie
+    // direkt, damit sie sich treffsicher mit dem Finger fassen lässt — die eigentlich
+    // sichtbare Linie bleibt darin schmal (stationDividerLine), der Rest der Grifffläche
+    // ist transparent.
+    stationDividerHandle: {
+      width: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stationDividerLine: { width: 1, alignSelf: 'stretch', backgroundColor: colors.border },
     stationHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
