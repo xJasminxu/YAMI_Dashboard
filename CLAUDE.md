@@ -88,6 +88,17 @@ Rolle des Geräts:
    Positionen sind per Checkbox auswählbar (z.B. für getrennte Rechnungen), die Summe der
    Auswahl wird live berechnet. Rein zur Orientierung für die Bedienung — es wird nichts
    gebucht oder gespeichert; die verbindliche Rechnung druckt weiterhin die Kasse.
+   "Vergangene Tische" (bereits per "Tisch abschließen" geschlossene Bestellungen, siehe
+   Status-Workflow unten) werden NICHT pro Tischnummer zu einer Sammelkarte zusammengefasst
+   — wird derselbe Tisch am selben Tag mehrfach besetzt und jeweils abgeschlossen (z.B.
+   Tisch 3 dreimal), erscheint jede Besetzung als eigener Eintrag mit ihrer eigenen
+   Abschlusszeit, sortiert nach Abschlusszeit (neueste zuerst). Grund: eine Sammelkarte mit
+   summierter Rechnung über mehrere, komplett unabhängige Besetzungen war nicht
+   nachvollziehbar. Technisch erkennbar an `orders.closed_at`: "Tisch abschließen" setzt
+   ihn per einem einzigen Update auf alle zu diesem Zeitpunkt offenen orders derselben
+   Tischnummer, alle orders einer Besetzung tragen also exakt denselben Zeitstempel — der
+   dient als Gruppierungsschlüssel (Tischnummer + closed_at) statt nur der Tischnummer
+   allein.
 
 Rollenwahl bestimmt nur Filter + Sortierung + UI-Layout, nicht das Datenmodell.
 

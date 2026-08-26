@@ -9,7 +9,10 @@ export type RootStackParamList = {
   Status: undefined;
   TableDetail: { tableNumber: number };
   TableOverview: undefined;
-  // closed: true → Aufruf aus "Vergangene Tische" (TableOverviewScreen.tsx), zeigt die
-  // bereits abgeschlossene(n) Bestellung(en) dieser Tischnummer statt der aktuellen.
-  TableBilling: { tableNumber: number; closed?: boolean };
+  // closed: true → Aufruf aus "Vergangene Tische" (TableOverviewScreen.tsx). closedAt
+  // identifiziert dabei genau EINEN Abschluss-Vorgang dieser Tischnummer (orders.closed_at,
+  // exakt gleicher Zeitstempel für alle orders, die bei diesem "Tisch abschließen" auf
+  // einmal geschlossen wurden) — ohne closedAt würden bei mehrfach am Tag besetzten Tischen
+  // alle vergangenen Besetzungen zusammen angezeigt statt nur der angetippten.
+  TableBilling: { tableNumber: number; closed?: boolean; closedAt?: string };
 };

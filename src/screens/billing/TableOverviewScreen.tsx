@@ -44,10 +44,11 @@ interface TableRow {
   // (itemTotal() liefert dann null) — die fließt nicht in priceSum ein, die Summe ist
   // also ggf. unvollständig. Näheres dazu erst beim Reinklicken in TableBillingScreen.tsx.
   hasUnpriced: boolean;
-  // Nur für "Vergangene Tische" gefüllt (siehe unten) — spätester closed_at-Wert unter
-  // den orders dieses Tisches, falls durch mehrere "Tisch abschließen"-Läufe (Tisch
-  // wieder neu bestellt, erneut abgeschlossen) mehrere Werte vorkämen. Für aktuell
-  // offene Tische bleibt es null.
+  // Nur für "Vergangene Tische" gefüllt (siehe unten) — der closed_at-Wert, der diese
+  // Karte als eigene Besetzung/Abschluss-Vorgang identifiziert (ein Tisch, der am selben
+  // Tag mehrfach besetzt und abgeschlossen wird, erzeugt entsprechend mehrere TableRow-
+  // Einträge mit unterschiedlichem closedAt, siehe pastByKey unten). Für aktuell offene
+  // Tische bleibt es null.
   closedAt: string | null;
 }
 
@@ -65,11 +66,41 @@ export default function TableOverviewScreen({ navigation }: Props) {
 
   const { current, past } = useMemo(() => {
     const currentByTable = new Map<number, TableRow>();
-    const pastByTable = new Map<number, TableRow>();
+    // Vergangene Tische werden NICHT mehr pro Tischnummer zusammengefasst, sondern pro
+    // einzelnem Abschluss-Vorgang (Tischnummer + closed_at) — "Tisch abschließen" setzt
+    // closed_at auf alle zu diesem Zeitpunkt offenen orders derselben Tischnummer in einem
+    // einzigen Update (siehe TableBillingScreen.tsx handleCloseTable), sie tragen also
+    // exakt denselben Zeitstempel und lassen sich darüber eindeutig einer Sitzung
+    // zuordnen. Ohne diese Aufsplittung landeten z.B. drei verschiedene Besetzungen von
+    // Tisch 3 an einem Tag in EINER Sammelkarte mit summierter Rechnung — nicht
+    // nachvollziehbar, welche Bestellung zu welcher Besetzung gehörte.
+    const pastByKey = new Map<string, TableRow>();
 
     for (const order of [...kitchen.orders, ...bar.orders]) {
-      const byTable = order.closedAt === null ? currentByTable : pastByTable;
-      const row = byTable.get(order.table.number) ?? {
+      if (order.closedAt === null) {
+        const row = currentByTable.get(order.table.number) ?? {
+          tableNumber: order.table.number,
+          tableId: order.table.id,
+          total: 0,
+          done: 0,
+          note: order.table.note,
+          priceSum: 0,
+          hasUnpriced: false,
+          closedAt: null,
+        };
+        row.total += order.items.length;
+        row.done += order.items.filter((item) => item.status === 'fertig').length;
+        for (const item of order.items) {
+          const total = itemTotal(item);
+          if (total === null) row.hasUnpriced = true;
+          else row.priceSum += total;
+        }
+        currentByTable.set(order.table.number, row);
+        continue;
+      }
+
+      const key = `${order.table.number}::${order.closedAt}`;
+      const row = pastByKey.get(key) ?? {
         tableNumber: order.table.number,
         tableId: order.table.id,
         total: 0,
@@ -77,7 +108,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
         note: order.table.note,
         priceSum: 0,
         hasUnpriced: false,
-        closedAt: null,
+        closedAt: order.closedAt,
       };
       row.total += order.items.length;
       row.done += order.items.filter((item) => item.status === 'fertig').length;
@@ -86,12 +117,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
         if (total === null) row.hasUnpriced = true;
         else row.priceSum += total;
       }
-      // Spätesten closed_at-Wert behalten, falls ein Tisch mehrfach abgeschlossen wurde
-      // (mehrere orders mit unterschiedlichem closed_at) — bestimmt unten die Sortierung.
-      if (order.closedAt !== null && (row.closedAt === null || order.closedAt > row.closedAt)) {
-        row.closedAt = order.closedAt;
-      }
-      byTable.set(order.table.number, row);
+      pastByKey.set(key, row);
     }
 
     return {
@@ -99,7 +125,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
       // Chronologisch nach Abschlusszeitpunkt statt nach Tischnummer — zuletzt
       // abgeschlossene Tische zuerst, das ist für Rückfragen/Nachkontrolle der
       // relevantere Fall als eine alphanumerische Tischsortierung.
-      past: Array.from(pastByTable.values()).sort((a, b) => (b.closedAt ?? '').localeCompare(a.closedAt ?? '')),
+      past: Array.from(pastByKey.values()).sort((a, b) => (b.closedAt ?? '').localeCompare(a.closedAt ?? '')),
     };
   }, [kitchen.orders, bar.orders]);
 
@@ -119,9 +145,10 @@ export default function TableOverviewScreen({ navigation }: Props) {
   // Tisch löschen: PIN-geschützt (siehe lib/adminPin.ts), löscht aber nur die
   // Bestellungen, die zu genau dieser Karte gehören — nicht die tables-Zeile selbst (die
   // bleibt für zukünftige Bestellungen unter derselben Nummer erhalten). "past" legt fest,
-  // ob die noch offenen (closed_at null) oder die bereits abgeschlossenen Bestellungen
-  // (closed_at gesetzt) dieses Tisches gelöscht werden — je nachdem, aus welcher der
-  // beiden Karten (aktuell/vergangen) heraus gelöscht wurde.
+  // ob die noch offenen (closed_at null) oder die zu genau diesem Abschluss-Zeitpunkt
+  // gehörenden Bestellungen (closed_at === row.closedAt) gelöscht werden — je nachdem, aus
+  // welcher Karte heraus gelöscht wurde. Bei "past" wird bewusst nur diese eine Sitzung
+  // gelöscht, nicht alle Abschlüsse dieser Tischnummer.
   const [deleteTarget, setDeleteTarget] = useState<{ row: TableRow; past: boolean } | null>(null);
   const [deletePin, setDeletePin] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -151,7 +178,9 @@ export default function TableOverviewScreen({ navigation }: Props) {
 
     // orders hat "on delete cascade" auf order_items — löscht beides in einem Schritt.
     let query = supabase.from('orders').delete().eq('table_id', deleteTarget.row.tableId);
-    query = deleteTarget.past ? query.not('closed_at', 'is', null) : query.is('closed_at', null);
+    query = deleteTarget.past
+      ? query.eq('closed_at', deleteTarget.row.closedAt as string)
+      : query.is('closed_at', null);
     const { error } = await query;
 
     setDeleting(false);
@@ -210,11 +239,17 @@ export default function TableOverviewScreen({ navigation }: Props) {
             <Text style={styles.sectionTitle}>Vergangene Tische</Text>
             {past.map((row) => (
               <TableCard
-                key={row.tableNumber}
+                key={`${row.tableNumber}::${row.closedAt}`}
                 row={row}
                 styles={styles}
                 past
-                onPress={() => navigation.navigate('TableBilling', { tableNumber: row.tableNumber, closed: true })}
+                onPress={() =>
+                  navigation.navigate('TableBilling', {
+                    tableNumber: row.tableNumber,
+                    closed: true,
+                    closedAt: row.closedAt ?? undefined,
+                  })
+                }
                 onNewOrder={() => navigation.navigate('Order', { tableNumber: row.tableNumber })}
                 onDelete={() => requestDeleteTable(row, true)}
               />

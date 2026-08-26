@@ -31,7 +31,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'TableBilling'>;
 // das bestehende Kassensystem, hier wird nichts gebucht oder gespeichert.
 export default function TableBillingScreen({ route, navigation }: Props) {
   const styles = useThemedStyles(createStyles);
-  const { tableNumber, closed: showClosed = false } = route.params;
+  const { tableNumber, closed: showClosed = false, closedAt } = route.params;
   // includeClosed:true, damit derselbe Hook sowohl den aktuellen Tisch (closedAt===null)
   // als auch einen aus "Vergangene Tische" aufgerufenen, bereits geschlossenen Tisch
   // (closedAt gesetzt) laden kann — welcher von beiden gemeint ist, entscheidet
@@ -73,12 +73,17 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const [savingNote, setSavingNote] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
 
+  // Bei showClosed muss zusätzlich exakt auf closedAt gematcht werden, nicht nur auf
+  // "irgendein closed_at gesetzt" — sonst würden bei mehrfach am Tag besetzten Tischen alle
+  // vergangenen Besetzungen zusammen angezeigt statt nur der aus der Tischübersicht
+  // angetippten (siehe TableOverviewScreen.tsx / RootStackParamList['TableBilling']).
   const tableOrders = useMemo(
     () =>
-      [...kitchen.orders, ...bar.orders].filter(
-        (order) => order.table.number === tableNumber && (order.closedAt !== null) === showClosed
-      ),
-    [kitchen.orders, bar.orders, tableNumber, showClosed]
+      [...kitchen.orders, ...bar.orders].filter((order) => {
+        if (order.table.number !== tableNumber) return false;
+        return showClosed ? order.closedAt === closedAt : order.closedAt === null;
+      }),
+    [kitchen.orders, bar.orders, tableNumber, showClosed, closedAt]
   );
   // Für "Tisch abschließen" gebraucht — anders als die restliche Seite ist das
   // ein echter Schreibzugriff (update auf orders.closed_at).
@@ -349,7 +354,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
       <View style={styles.header}>
         <Text style={styles.title}>
           Tisch {tableNumber}
-          {showClosed ? ' (abgeschlossen)' : ''}
+          {showClosed && closedAt ? ` (abgeschlossen ${formatDateTime(closedAt)})` : ''}
         </Text>
         <Text style={styles.grandTotal}>Gesamt: {formatPrice(grandTotal)}</Text>
       </View>
