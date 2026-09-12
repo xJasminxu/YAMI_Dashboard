@@ -87,7 +87,19 @@ Rolle des Geräts:
    Tippen auf einen Tisch öffnet die Bestellübersicht mit vorläufiger Abrechnung: einzelne
    Positionen sind per Checkbox auswählbar (z.B. für getrennte Rechnungen), die Summe der
    Auswahl wird live berechnet. Rein zur Orientierung für die Bedienung — es wird nichts
-   gebucht oder gespeichert; die verbindliche Rechnung druckt weiterhin die Kasse.
+   gebucht oder gespeichert; die verbindliche Rechnung druckt weiterhin die Kasse. Zwei
+   Wege, Positionen auf einen anderen Tisch umzubuchen (z.B. bei Tischwechsel oder falscher
+   Tischnummer): "Tisch wechseln / zusammenführen" verschiebt den GANZEN Tisch (alle seine
+   offenen Bestellungen, per `orders.table_id`) auf eine andere Tischnummer — hat das Ziel
+   schon eine offene Bestellung, landen beide Tische automatisch unter derselben `table_id`
+   und werden so zu einer gemeinsamen Rechnung zusammengeführt. "Verschieben" neben dem
+   Bezahlt-Button betrifft dagegen nur die per Checkbox ausgewählten EINZELNEN Positionen
+   (per `order_items.order_id`, auf die offene Bestellung des Zieltisches umgehängt bzw. auf
+   eine neu angelegte, falls dort noch keine läuft) — für den Fall, dass nur ein Teil der
+   Gäste den Tisch wechselt oder nur eine einzelne Position falsch zugeordnet wurde; der Rest
+   des Ursprungstisches bleibt unverändert stehen. Beide Wege legen bei einer noch nie
+   benutzten Zieltischnummer automatisch eine neue `tables`-Zeile an (dieselbe Upsert-Logik
+   wie beim Absenden einer Bestellung in OrderScreen.tsx).
    "Vergangene Tische" (bereits per "Tisch abschließen" geschlossene Bestellungen, siehe
    Status-Workflow unten) werden NICHT pro Tischnummer zu einer Sammelkarte zusammengefasst
    — wird derselbe Tisch am selben Tag mehrfach besetzt und jeweils abgeschlossen (z.B.

@@ -58,6 +58,15 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const [moveTargetText, setMoveTargetText] = useState('');
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
+  // "Ausgewählte verschieben" (siehe confirmMoveItems) — anders als "Tisch wechseln /
+  // zusammenführen" oben (verschiebt ALLE offenen Bestellungen dieses Tisches per
+  // orders.table_id) betrifft das hier nur die per Checkbox ausgewählten EINZELNEN
+  // Positionen, z.B. wenn nur ein Teil der Gäste an einen anderen Tisch wechselt oder eine
+  // Position aus Versehen auf dem falschen Tisch gelandet ist.
+  const [moveItemsDialogOpen, setMoveItemsDialogOpen] = useState(false);
+  const [moveItemsTargetText, setMoveItemsTargetText] = useState('');
+  const [movingItems, setMovingItems] = useState(false);
+  const [moveItemsError, setMoveItemsError] = useState<string | null>(null);
   // Position, die per X-Button/Wisch-Geste zum Entfernen vorgemerkt ist (siehe unten) —
   // anders als "Bezahlt" (rein lokaler UI-Zustand) ist das Entfernen ein echtes Delete
   // auf order_items und damit unwiderruflich, deshalb erst nach Bestätigung im Modal.
@@ -187,6 +196,97 @@ export default function TableBillingScreen({ route, navigation }: Props) {
 
     setMoveDialogOpen(false);
     navigation.replace('TableBilling', { tableNumber: targetNumber });
+  }
+
+  function openMoveItemsDialog() {
+    if (selectedIds.size === 0) return;
+    setMoveItemsError(null);
+    setMoveItemsTargetText('');
+    setMoveItemsDialogOpen(true);
+  }
+
+  function cancelMoveItems() {
+    setMoveItemsDialogOpen(false);
+    setMoveItemsError(null);
+  }
+
+  // Hängt nur die ausgewählten Positionen (order_items.order_id) auf eine andere
+  // Bestellung um, statt wie confirmMove oben ganze Bestellungen per table_id zu
+  // verschieben — sonst würden auch die NICHT ausgewählten Positionen derselben
+  // Bestellung mitwandern. Hat der Zieltisch schon eine offene Bestellung, hängen sich die
+  // Positionen dort an (gemeinsame Rechnung); sonst wird für ihn eine neue Bestellung
+  // angelegt (dieselbe tables-Upsert-Logik wie bei confirmMove, damit eine noch nie
+  // benutzte Zielnummer automatisch entsteht). Bleibt bewusst auf diesem Tisch stehen
+  // (kein navigation.replace wie bei confirmMove) — anders als dort ist dieser Tisch nach
+  // einer Teil-Verschiebung ja meist noch nicht leer.
+  async function confirmMoveItems() {
+    const targetNumber = parseInt(moveItemsTargetText, 10);
+    if (!targetNumber || targetNumber === tableNumber) {
+      setMoveItemsError('Bitte eine andere, gültige Tischnummer eingeben.');
+      return;
+    }
+    if (selectedIds.size === 0) return;
+
+    setMovingItems(true);
+    setMoveItemsError(null);
+
+    const { data: targetTable, error: tableError } = await supabase
+      .from('tables')
+      .upsert({ number: targetNumber }, { onConflict: 'number' })
+      .select()
+      .single();
+
+    if (tableError || !targetTable) {
+      setMovingItems(false);
+      setMoveItemsError(tableError?.message ?? 'Tisch konnte nicht angelegt werden.');
+      return;
+    }
+
+    const { data: existingOrder, error: findError } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('table_id', targetTable.id)
+      .is('closed_at', null)
+      .limit(1)
+      .maybeSingle();
+
+    if (findError) {
+      setMovingItems(false);
+      setMoveItemsError(findError.message);
+      return;
+    }
+
+    let targetOrderId = existingOrder?.id as string | undefined;
+
+    if (!targetOrderId) {
+      const { data: newOrder, error: createError } = await supabase
+        .from('orders')
+        .insert({ table_id: targetTable.id })
+        .select('id')
+        .single();
+
+      if (createError || !newOrder) {
+        setMovingItems(false);
+        setMoveItemsError(createError?.message ?? 'Bestellung konnte nicht angelegt werden.');
+        return;
+      }
+      targetOrderId = newOrder.id;
+    }
+
+    const { error } = await supabase
+      .from('order_items')
+      .update({ order_id: targetOrderId })
+      .in('id', Array.from(selectedIds));
+
+    setMovingItems(false);
+
+    if (error) {
+      setMoveItemsError(error.message);
+      return;
+    }
+
+    setSelectedIds(new Set());
+    setMoveItemsDialogOpen(false);
   }
 
   // X-Button oder Wisch-Geste (siehe FlatList unten) merken nur die Position vor —
@@ -387,15 +487,29 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={[styles.paidButton, selectedIds.size === 0 && styles.paidButtonDisabled]}
-        onPress={requestMarkSelectedAsPaid}
-        disabled={selectedIds.size === 0}
-      >
-        <Text style={styles.paidButtonText}>
-          Bezahlt{selectedIds.size > 0 ? ` (${selectedIds.size} · ${formatPrice(selectedTotal)})` : ''}
-        </Text>
-      </TouchableOpacity>
+      <View style={styles.selectionActionsRow}>
+        <TouchableOpacity
+          style={[styles.paidButton, styles.selectionActionButton, selectedIds.size === 0 && styles.paidButtonDisabled]}
+          onPress={requestMarkSelectedAsPaid}
+          disabled={selectedIds.size === 0}
+        >
+          <Text style={styles.paidButtonText}>
+            Bezahlt{selectedIds.size > 0 ? ` (${selectedIds.size} · ${formatPrice(selectedTotal)})` : ''}
+          </Text>
+        </TouchableOpacity>
+        {/* Verschiebt nur die ausgewählten Positionen auf einen anderen Tisch (siehe
+            confirmMoveItems) — anders als "Tisch wechseln / zusammenführen" unten im Footer,
+            das den ganzen Tisch betrifft. */}
+        <TouchableOpacity
+          style={[styles.moveItemsButton, selectedIds.size === 0 && styles.moveItemsButtonDisabled]}
+          onPress={openMoveItemsDialog}
+          disabled={selectedIds.size === 0}
+        >
+          <Text style={styles.moveItemsButtonText}>
+            Verschieben{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <FlatList
         data={items}
@@ -677,6 +791,41 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <Modal visible={moveItemsDialogOpen} transparent animationType="fade" onRequestClose={cancelMoveItems}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              {selectedIds.size} Position(en) verschieben
+            </Text>
+            <Text style={styles.modalBody}>
+              Neue Tischnummer eingeben. Laufen dort schon Bestellungen, hängen sich die ausgewählten Positionen
+              dort an (gemeinsame Rechnung) — sonst wird für Tisch {moveItemsTargetText || '…'} eine neue Bestellung
+              angelegt. Der Rest von Tisch {tableNumber} bleibt unverändert hier stehen.
+            </Text>
+            <TextInput
+              style={styles.noteInput}
+              value={moveItemsTargetText}
+              onChangeText={(text) => setMoveItemsTargetText(text.replace(/[^0-9]/g, ''))}
+              placeholder="z.B. 12"
+              placeholderTextColor={styles.noteInputPlaceholder.color as string}
+              keyboardType="number-pad"
+              autoFocus
+            />
+            {moveItemsError && <Text style={styles.errorText}>{moveItemsError}</Text>}
+            <TouchableOpacity
+              style={[styles.paymentMethodButton, (movingItems || !moveItemsTargetText) && styles.confirmButtonDisabled]}
+              onPress={confirmMoveItems}
+              disabled={movingItems || !moveItemsTargetText}
+            >
+              {movingItems ? <ActivityIndicator color="#fff" /> : <Text style={styles.paymentMethodButtonText}>Verschieben</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelMoveItems} disabled={movingItems}>
+              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -729,6 +878,16 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 8,
     },
     selectAction: { fontSize: 13, color: colors.primary, fontWeight: '600' },
+    // Bezahlt- und Verschieben-Button nebeneinander (siehe selectionActionsRow) — beide
+    // wirken auf dieselbe Checkbox-Auswahl (selectedIds), deshalb direkt nebeneinander statt
+    // wie vorher der Bezahlt-Button allein über die volle Breite.
+    selectionActionsRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginHorizontal: 16,
+      marginBottom: 12,
+    },
+    selectionActionButton: { flex: 1, marginHorizontal: 0, marginBottom: 0 },
     paidButton: {
       marginHorizontal: 16,
       marginBottom: 12,
@@ -739,6 +898,20 @@ const createStyles = (colors: ThemeColors) =>
     },
     paidButtonDisabled: { backgroundColor: colors.textFaint },
     paidButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+    // "Verschieben"-Button für die ausgewählten Positionen (siehe confirmMoveItems) —
+    // dieselbe Outline-Optik wie moveTableButton unten im Footer (Primärfarbe statt eines
+    // vollflächigen Buttons), damit klar ist, dass es eine andere Art Aktion ist als
+    // "Bezahlt" (kein Geld-Vorgang, sondern eine Umbuchung).
+    moveItemsButton: {
+      flex: 1,
+      borderWidth: 1.5,
+      borderColor: colors.primary,
+      borderRadius: 10,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    moveItemsButtonDisabled: { borderColor: colors.borderStrong },
+    moveItemsButtonText: { color: colors.primary, fontSize: 15, fontWeight: '700' },
     listContent: { paddingHorizontal: 16, paddingBottom: 8 },
     itemRow: {
       flexDirection: 'row',
