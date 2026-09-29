@@ -30,7 +30,7 @@ function ThemedNavigation() {
       card: colors.surface,
       text: colors.text,
       border: colors.border,
-      primary: colors.primary,
+      primary: colors.accent,
     },
   };
 

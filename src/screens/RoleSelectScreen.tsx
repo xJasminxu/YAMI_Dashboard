@@ -6,6 +6,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -37,6 +38,12 @@ function navigateToRole(navigation: Props['navigation'], role: DeviceRole) {
       return;
     case 'billing':
       navigation.navigate('TableOverview');
+      return;
+    case 'revenue':
+      navigation.navigate('Revenue');
+      return;
+    case 'admin':
+      navigation.navigate('Admin');
       return;
   }
 }
@@ -94,23 +101,41 @@ export default function RoleSelectScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
       <View style={styles.logoBackdrop}>
         <Image source={require('../../assets/yami-logo.png')} style={styles.logo} resizeMode="contain" />
       </View>
-      {DEVICE_ROLES.map(({ role, label }) => (
-        <TouchableOpacity key={role} style={styles.button} onPress={() => navigateToRole(navigation, role)}>
-          <Text style={styles.buttonText}>{label}</Text>
-        </TouchableOpacity>
-      ))}
+      <Text style={styles.greeting}>Willkommen! 👋 欢迎</Text>
+      <Text style={styles.subGreeting}>Wofür wird dieses Gerät genutzt? · 请选择设备用途</Text>
+
+      <View style={styles.roleList}>
+        {DEVICE_ROLES.map(({ role, emoji, label, hanzi }) => (
+          <TouchableOpacity
+            key={role}
+            style={[styles.button, role === 'order' && styles.buttonPrimary]}
+            onPress={() => navigateToRole(navigation, role)}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.emojiBubble, role === 'order' && styles.emojiBubblePrimary]}>
+              <Text style={styles.emoji}>{emoji}</Text>
+            </View>
+            <View style={styles.buttonTextWrap}>
+              <Text style={[styles.buttonText, role === 'order' && styles.buttonTextPrimary]}>{label}</Text>
+              <Text style={[styles.buttonHanzi, role === 'order' && styles.buttonHanziPrimary]}>{hanzi}</Text>
+            </View>
+            <Text style={[styles.chevron, role === 'order' && styles.buttonTextPrimary]}>›</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <TouchableOpacity style={styles.dayCloseButton} onPress={openTagesabschlussDialog}>
-        <Text style={styles.dayCloseButtonText}>Tagesabschluss</Text>
+        <Text style={styles.dayCloseButtonText}>🌙 Tagesabschluss</Text>
       </TouchableOpacity>
 
       <Modal visible={confirmOpen} transparent animationType="fade" onRequestClose={cancelTagesabschluss}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
+            <Text style={styles.modalEmoji}>🧹</Text>
             <Text style={styles.modalTitle}>Tagesabschluss durchführen?</Text>
             <Text style={styles.modalBody}>
               Löscht alle offenen und fertigen Bestellungen unwiderruflich und setzt alle Tisch-Notizen zurück,
@@ -136,7 +161,7 @@ export default function RoleSelectScreen({ navigation }: Props) {
               {closing ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.confirmButtonText}>Ja, alle Bestellungen löschen</Text>
+                <Text style={styles.confirmButtonText}>🗑️ Ja, alle Bestellungen löschen</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelTagesabschluss} disabled={closing}>
@@ -145,58 +170,96 @@ export default function RoleSelectScreen({ navigation }: Props) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </ScrollView>
   );
 }
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    scroll: { flex: 1, backgroundColor: colors.background },
     container: {
-      flex: 1,
+      flexGrow: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: colors.background,
       padding: 24,
-      gap: 12,
     },
     // Das Logo ist weißes Linienwerk auf transparentem Hintergrund — im Light
     // Mode sonst unsichtbar. Fester dunkler Badge-Hintergrund statt einer
     // zweiten Bilddatei, damit das Logo in beiden Themes lesbar bleibt.
     logoBackdrop: {
       width: '80%',
-      maxWidth: 320,
+      maxWidth: 360,
       backgroundColor: '#1c1c1e',
-      borderRadius: 16,
-      paddingVertical: 12,
-      paddingHorizontal: 16,
-      marginBottom: 16,
+      borderRadius: 24,
+      paddingVertical: 16,
+      paddingHorizontal: 20,
+      marginBottom: 20,
+      shadowColor: colors.shadow,
+      shadowOpacity: 0.25,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 6,
     },
     logo: {
       width: '100%',
       height: 120,
     },
-    button: {
-      width: '100%',
-      maxWidth: 320,
-      backgroundColor: colors.surface,
-      paddingVertical: 16,
-      borderRadius: 12,
-      alignItems: 'center',
+    greeting: { fontSize: 24, fontWeight: '800', color: colors.text, textAlign: 'center' },
+    subGreeting: {
+      fontSize: 14,
+      color: colors.textMuted,
+      textAlign: 'center',
+      marginTop: 4,
+      marginBottom: 20,
     },
+    roleList: { width: '100%', maxWidth: 420, gap: 12 },
+    button: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: colors.border,
+      shadowColor: colors.shadow,
+      shadowOpacity: 0.06,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 2,
+    },
+    buttonPrimary: { backgroundColor: colors.accent, borderColor: colors.accent },
+    emojiBubble: {
+      width: 48,
+      height: 48,
+      borderRadius: 14,
+      backgroundColor: colors.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 14,
+    },
+    emojiBubblePrimary: { backgroundColor: 'rgba(255,255,255,0.22)' },
+    emoji: { fontSize: 26 },
+    buttonTextWrap: { flex: 1 },
     buttonText: {
       color: colors.text,
       fontSize: 18,
-      fontWeight: '600',
+      fontWeight: '700',
     },
+    buttonTextPrimary: { color: colors.onAccent },
+    buttonHanzi: { color: colors.textMuted, fontSize: 14, marginTop: 1 },
+    buttonHanziPrimary: { color: 'rgba(255,255,255,0.85)' },
+    chevron: { fontSize: 28, color: colors.textFaint, marginLeft: 8, fontWeight: '300' },
     dayCloseButton: {
       width: '100%',
-      maxWidth: 320,
+      maxWidth: 420,
       borderWidth: 1.5,
       borderColor: colors.danger,
+      borderStyle: 'dashed',
       paddingVertical: 14,
-      borderRadius: 12,
+      borderRadius: 18,
       alignItems: 'center',
-      marginTop: 20,
+      marginTop: 28,
     },
     dayCloseButtonText: {
       color: colors.danger,
@@ -212,11 +275,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     modalCard: {
       backgroundColor: colors.surface,
-      borderRadius: 14,
-      padding: 20,
+      borderRadius: 20,
+      padding: 22,
       width: '100%',
       maxWidth: 380,
     },
+    modalEmoji: { fontSize: 40, textAlign: 'center', marginBottom: 6 },
     modalTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 10, color: colors.text },
     modalBody: {
       fontSize: 14,

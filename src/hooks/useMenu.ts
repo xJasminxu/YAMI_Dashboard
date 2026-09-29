@@ -14,7 +14,7 @@ export interface CategoryWithItems extends Category {
 // stand es plötzlich nicht mehr an seiner R1..R6-Position). Items ohne Code (z.B.
 // Getränke) behalten ihre bisherige (created_at-)Reihenfolge und landen hinter allen
 // codierten Items derselben Kategorie.
-function compareItemCode(a: MenuItem, b: MenuItem): number {
+export function compareItemCode(a: MenuItem, b: MenuItem): number {
   if (!a.item_code && !b.item_code) return 0;
   if (!a.item_code) return 1;
   if (!b.item_code) return -1;

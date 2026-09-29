@@ -21,14 +21,20 @@ export interface ThemeColors {
   cardNeu: string; // Küchen-/Bar-Ticket: neu
   cardAngefangen: string; // Küchen-/Bar-Ticket: teilweise fertig
   cardFertig: string; // Küchen-/Bar-Ticket: fertig
+  accent: string; // YAMI-Markenfarbe (warmes Rot-Orange, "Grill-Glut") für Hauptaktionen
+  accentSurface: string; // dezenter Hintergrund in Akzentfarbe (z.B. aktive Chips, Badges)
+  onAccent: string; // Text auf accent
+  shadow: string; // Schattenfarbe für Karten
 }
 
+// Hellmodus: leicht warmer "Papier"-Hintergrund mit weißen Karten darauf, damit Karten
+// und Buttons sich sichtbar abheben (vorher weiß auf fast-weiß).
 export const lightColors: ThemeColors = {
-  background: '#ffffff',
-  surface: '#f9fafb',
-  surfaceAlt: '#f3f4f6',
-  border: '#e5e7eb',
-  borderStrong: '#d1d5db',
+  background: '#f7f5f2',
+  surface: '#ffffff',
+  surfaceAlt: '#f1eeea',
+  border: '#e7e3de',
+  borderStrong: '#d4cec7',
   text: '#111827',
   textSecondary: '#374151',
   textMuted: '#6b7280',
@@ -42,6 +48,10 @@ export const lightColors: ThemeColors = {
   cardNeu: '#dbeafe',
   cardAngefangen: '#fde2ea',
   cardFertig: '#dcfce7',
+  accent: '#e4572e',
+  accentSurface: '#fdebe4',
+  onAccent: '#ffffff',
+  shadow: '#1c1917',
 };
 
 export const darkColors: ThemeColors = {
@@ -63,4 +73,8 @@ export const darkColors: ThemeColors = {
   cardNeu: '#1e3a5f',
   cardAngefangen: '#4c1d3d',
   cardFertig: '#14532d',
+  accent: '#f26b43',
+  accentSurface: '#3b2019',
+  onAccent: '#ffffff',
+  shadow: '#000000',
 };

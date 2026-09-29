@@ -47,8 +47,8 @@ alter table categories add column if not exists kitchen_station text
   check (kitchen_station in ('vorspeise', 'hauptspeise', 'barbecue'));
 
 -- Migration: is_discount-Spalte (nachträglich hinzugefügt). Markiert die "Rabatt"-
--- Kategorie (siehe seed.sql) — ihre Positionen sind Preis-Abzüge, die die Bedienung im
--- Bestell-Screen mit Beschreibung + Betrag hinzufügt, keine zuzubereitenden Gerichte/
+-- Kategorie (siehe seed.sql) — ihre Positionen sind Preis-Abzüge, die die Bedienung in
+-- Tischübersicht/Abrechnung (lib/discount.ts) mit Beschreibung + Betrag bucht, keine zuzubereitenden Gerichte/
 -- Getränke. DeviceTicketBoard.tsx blendet Positionen aus is_discount-Kategorien deshalb
 -- aus den Küchen-/Bar-Tickets aus; in der Tischübersicht/vorläufigen Abrechnung
 -- (TableBillingScreen.tsx etc.) bleiben sie sichtbar, damit der Rabatt vom Gesamtbetrag
@@ -261,3 +261,72 @@ drop policy if exists "allow all update order_items" on order_items;
 create policy "allow all update order_items" on order_items for update using (true);
 drop policy if exists "allow all delete order_items" on order_items;
 create policy "allow all delete order_items" on order_items for delete using (true); -- für Tagesabschluss (Cascade von orders)
+
+-- ---------------------------------------------------------------------------
+-- Admin-Modus: Speisekarte bearbeiten (AdminScreen.tsx)
+-- Neue Gerichte anlegen, Preise/Namen ändern und Gerichte ausblenden. "Entfernen" setzt
+-- bewusst nur active=false statt eines echten delete — menu_items ist per
+-- "on delete restrict" von bereits bestellten order_items referenziert (und die sollen in
+-- Tischübersicht/Abrechnung weiter ihren Namen zeigen). Ausgeblendete Gerichte
+-- verschwinden aus der Bestellaufnahme (useMenu lädt nur active=true) und lassen sich im
+-- Admin-Modus wiederherstellen. Geschützt ist das nur über die Admin-PIN im Client (wie
+-- Tagesabschluss/Tisch löschen, siehe lib/adminPin.ts), nicht serverseitig.
+-- ---------------------------------------------------------------------------
+drop policy if exists "allow all insert menu_items" on menu_items;
+create policy "allow all insert menu_items" on menu_items for insert with check (true);
+drop policy if exists "allow all update menu_items" on menu_items;
+create policy "allow all update menu_items" on menu_items for update using (true);
+
+-- ---------------------------------------------------------------------------
+-- activity_log: Protokoll im Admin-Modus
+-- Hält fest, wer-was-wann an Geld-relevanten Stellen passiert ist: gelöschte Tische
+-- (TableOverviewScreen.tsx, 🗑️), entfernte Einzelpositionen (TableBillingScreen.tsx) und
+-- angewendete Rabatte (lib/discount.ts, aus Tischübersicht/Abrechnung). Eigene Tabelle ohne Fremdschlüssel,
+-- damit die Einträge auch dann erhalten bleiben, wenn die zugehörigen orders/order_items
+-- längst gelöscht sind — und auch den Tagesabschluss überstehen.
+-- Aufbewahrung: Einträge werden nach 3 Tagen ENDGÜLTIG gelöscht (pg_cron-Job unten,
+-- zusätzlich räumt der Client bei jedem neuen Eintrag und beim Öffnen des Protokolls auf,
+-- falls pg_cron im Projekt nicht verfügbar ist — siehe lib/activityLog.ts).
+-- ---------------------------------------------------------------------------
+create table if not exists activity_log (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  kind text not null check (kind in ('table_deleted', 'item_deleted', 'discount_applied')),
+  table_number int,
+  summary text not null,
+  -- Betroffener Betrag in Euro (Summe der gelöschten Positionen bzw. Rabattbetrag,
+  -- negativ). null, wenn kein Preis hinterlegt war.
+  amount numeric(8,2),
+  -- Zusatzinfos, z.B. Liste der gelöschten Positionen: [{"name": "...", "price": 1.0}, ...]
+  details jsonb
+);
+
+create index if not exists activity_log_created_at_idx on activity_log(created_at);
+
+alter table activity_log enable row level security;
+drop policy if exists "allow all read activity_log" on activity_log;
+create policy "allow all read activity_log" on activity_log for select using (true);
+drop policy if exists "allow all insert activity_log" on activity_log;
+create policy "allow all insert activity_log" on activity_log for insert with check (true);
+-- Löschen nur für abgelaufene Einträge (Aufräumen durch den Client, siehe oben) — ein
+-- frischer Eintrag lässt sich so nicht nachträglich aus dem Protokoll entfernen.
+drop policy if exists "allow delete expired activity_log" on activity_log;
+create policy "allow delete expired activity_log" on activity_log for delete
+  using (created_at < now() - interval '3 days');
+
+-- Stündlicher Aufräum-Job per pg_cron (bei Supabase unter Database → Extensions
+-- verfügbar). In einen eigenen Block mit Fehlerbehandlung gepackt, damit das restliche
+-- Skript auch in einem Projekt ohne pg_cron durchläuft — dann übernimmt allein das
+-- Aufräumen im Client. cron.schedule mit gleichem Job-Namen überschreibt einen bereits
+-- bestehenden Job, ist also idempotent.
+do $$
+begin
+  create extension if not exists pg_cron;
+  perform cron.schedule(
+    'purge-activity-log',
+    '7 * * * *',
+    $cron$delete from public.activity_log where created_at < now() - interval '3 days'$cron$
+  );
+exception when others then
+  raise notice 'pg_cron nicht verfügbar (%), activity_log wird nur vom Client aufgeräumt.', sqlerrm;
+end $$;

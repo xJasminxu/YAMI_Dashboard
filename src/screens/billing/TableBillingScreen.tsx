@@ -17,6 +17,8 @@ import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import { formatDateTime } from '../../lib/datetime';
 import { itemTotal, formatPrice } from '../../lib/pricing';
+import { logActivity } from '../../lib/activityLog';
+import DiscountDialog from '../../components/DiscountDialog';
 import { supabase } from '../../lib/supabase';
 import type { RootStackParamList } from '../../navigation/types';
 import type { PaymentMethod } from '../../types/database';
@@ -48,25 +50,12 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const [savingPayment, setSavingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  // 🏷️ Rabatt direkt auf diesen Tisch buchen (components/DiscountDialog.tsx).
+  const [discountOpen, setDiscountOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
-  // "Tisch wechseln/zusammenführen" (siehe confirmMove) — deckt beide Fälle ab: falsch
-  // eingetippte Tischnummer korrigieren (Ziel hat noch keine offenen Bestellungen) und
-  // zwei Tische zu einer Rechnung zusammenlegen (Ziel hat bereits welche), je nachdem ob
-  // die eingegebene Zielnummer schon eine laufende Bestellung hat.
-  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
-  const [moveTargetText, setMoveTargetText] = useState('');
-  const [moving, setMoving] = useState(false);
-  const [moveError, setMoveError] = useState<string | null>(null);
-  // "Ausgewählte verschieben" (siehe confirmMoveItems) — anders als "Tisch wechseln /
-  // zusammenführen" oben (verschiebt ALLE offenen Bestellungen dieses Tisches per
-  // orders.table_id) betrifft das hier nur die per Checkbox ausgewählten EINZELNEN
-  // Positionen, z.B. wenn nur ein Teil der Gäste an einen anderen Tisch wechselt oder eine
-  // Position aus Versehen auf dem falschen Tisch gelandet ist.
-  const [moveItemsDialogOpen, setMoveItemsDialogOpen] = useState(false);
-  const [moveItemsTargetText, setMoveItemsTargetText] = useState('');
-  const [movingItems, setMovingItems] = useState(false);
-  const [moveItemsError, setMoveItemsError] = useState<string | null>(null);
+  // Tisch wechseln/zusammenführen und einzelne Positionen verschieben leben seit Kurzem in
+  // der Tischübersicht (TableOverviewScreen.tsx, 🔀/✂️-Buttons je Tischkarte), nicht mehr hier.
   // Position, die per X-Button/Wisch-Geste zum Entfernen vorgemerkt ist (siehe unten) —
   // anders als "Bezahlt" (rein lokaler UI-Zustand) ist das Entfernen ein echtes Delete
   // auf order_items und damit unwiderruflich, deshalb erst nach Bestätigung im Modal.
@@ -137,158 +126,6 @@ export default function TableBillingScreen({ route, navigation }: Props) {
     navigation.goBack();
   }
 
-  function openMoveDialog() {
-    setMoveError(null);
-    setMoveTargetText('');
-    setMoveDialogOpen(true);
-  }
-
-  function cancelMove() {
-    setMoveDialogOpen(false);
-    setMoveError(null);
-  }
-
-  // Verschiebt alle noch offenen (nicht bereits geschlossenen) Bestellungen dieses Tisches
-  // auf eine andere Tischnummer — z.B. wenn die Bedienung sich bei der Tischnummer
-  // vertippt hat oder Gäste den Tisch gewechselt haben. Hat die Zielnummer bereits eigene
-  // laufende Bestellungen, landen beide automatisch unter derselben table_id und werden
-  // damit zu einer gemeinsamen Rechnung zusammengeführt — "Tisch umbenennen" und "zwei
-  // Tische zusammenlegen" sind hier also derselbe Mechanismus, nur mit/ohne Kollision.
-  // Dieselbe tables-Upsert-Logik wie beim Absenden einer Bestellung (siehe
-  // OrderScreen.tsx submitOrder), damit eine noch nie benutzte Zielnummer automatisch
-  // angelegt wird.
-  async function confirmMove() {
-    if (!tableId) return;
-
-    const targetNumber = parseInt(moveTargetText, 10);
-    if (!targetNumber || targetNumber === tableNumber) {
-      setMoveError('Bitte eine andere, gültige Tischnummer eingeben.');
-      return;
-    }
-
-    setMoving(true);
-    setMoveError(null);
-
-    const { data: targetTable, error: tableError } = await supabase
-      .from('tables')
-      .upsert({ number: targetNumber }, { onConflict: 'number' })
-      .select()
-      .single();
-
-    if (tableError || !targetTable) {
-      setMoving(false);
-      setMoveError(tableError?.message ?? 'Tisch konnte nicht angelegt werden.');
-      return;
-    }
-
-    const { error } = await supabase
-      .from('orders')
-      .update({ table_id: targetTable.id })
-      .eq('table_id', tableId)
-      .is('closed_at', null);
-
-    setMoving(false);
-
-    if (error) {
-      setMoveError(error.message);
-      return;
-    }
-
-    setMoveDialogOpen(false);
-    navigation.replace('TableBilling', { tableNumber: targetNumber });
-  }
-
-  function openMoveItemsDialog() {
-    if (selectedIds.size === 0) return;
-    setMoveItemsError(null);
-    setMoveItemsTargetText('');
-    setMoveItemsDialogOpen(true);
-  }
-
-  function cancelMoveItems() {
-    setMoveItemsDialogOpen(false);
-    setMoveItemsError(null);
-  }
-
-  // Hängt nur die ausgewählten Positionen (order_items.order_id) auf eine andere
-  // Bestellung um, statt wie confirmMove oben ganze Bestellungen per table_id zu
-  // verschieben — sonst würden auch die NICHT ausgewählten Positionen derselben
-  // Bestellung mitwandern. Hat der Zieltisch schon eine offene Bestellung, hängen sich die
-  // Positionen dort an (gemeinsame Rechnung); sonst wird für ihn eine neue Bestellung
-  // angelegt (dieselbe tables-Upsert-Logik wie bei confirmMove, damit eine noch nie
-  // benutzte Zielnummer automatisch entsteht). Bleibt bewusst auf diesem Tisch stehen
-  // (kein navigation.replace wie bei confirmMove) — anders als dort ist dieser Tisch nach
-  // einer Teil-Verschiebung ja meist noch nicht leer.
-  async function confirmMoveItems() {
-    const targetNumber = parseInt(moveItemsTargetText, 10);
-    if (!targetNumber || targetNumber === tableNumber) {
-      setMoveItemsError('Bitte eine andere, gültige Tischnummer eingeben.');
-      return;
-    }
-    if (selectedIds.size === 0) return;
-
-    setMovingItems(true);
-    setMoveItemsError(null);
-
-    const { data: targetTable, error: tableError } = await supabase
-      .from('tables')
-      .upsert({ number: targetNumber }, { onConflict: 'number' })
-      .select()
-      .single();
-
-    if (tableError || !targetTable) {
-      setMovingItems(false);
-      setMoveItemsError(tableError?.message ?? 'Tisch konnte nicht angelegt werden.');
-      return;
-    }
-
-    const { data: existingOrder, error: findError } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('table_id', targetTable.id)
-      .is('closed_at', null)
-      .limit(1)
-      .maybeSingle();
-
-    if (findError) {
-      setMovingItems(false);
-      setMoveItemsError(findError.message);
-      return;
-    }
-
-    let targetOrderId = existingOrder?.id as string | undefined;
-
-    if (!targetOrderId) {
-      const { data: newOrder, error: createError } = await supabase
-        .from('orders')
-        .insert({ table_id: targetTable.id })
-        .select('id')
-        .single();
-
-      if (createError || !newOrder) {
-        setMovingItems(false);
-        setMoveItemsError(createError?.message ?? 'Bestellung konnte nicht angelegt werden.');
-        return;
-      }
-      targetOrderId = newOrder.id;
-    }
-
-    const { error } = await supabase
-      .from('order_items')
-      .update({ order_id: targetOrderId })
-      .in('id', Array.from(selectedIds));
-
-    setMovingItems(false);
-
-    if (error) {
-      setMoveItemsError(error.message);
-      return;
-    }
-
-    setSelectedIds(new Set());
-    setMoveItemsDialogOpen(false);
-  }
-
   // X-Button oder Wisch-Geste (siehe FlatList unten) merken nur die Position vor —
   // öffnet das Bestätigungs-Modal, statt sofort zu löschen. Anders als das Abhaken in
   // Küche/Bar (dort jederzeit rückgängig per erneutem Antippen) ist ein gelöschtes
@@ -322,6 +159,15 @@ export default function TableBillingScreen({ route, navigation }: Props) {
       setRemoveError(error.message);
       return;
     }
+
+    // Admin-Protokoll (lib/activityLog.ts): entfernte Position festhalten.
+    const isDiscount = removeItem.menu_item.category.is_discount;
+    logActivity({
+      kind: 'item_deleted',
+      tableNumber,
+      summary: `${isDiscount ? 'Rabatt' : 'Position'} entfernt: ${removeItem.menu_item.item_code ? `${removeItem.menu_item.item_code} · ` : ''}${isDiscount ? removeItem.variant_de ?? 'Rabatt' : removeItem.menu_item.name_de}${!isDiscount && removeItem.variant_de ? ` · ${removeItem.variant_de}` : ''}`,
+      amount: itemTotal(removeItem),
+    });
 
     setRemoveItem(null);
   }
@@ -487,29 +333,15 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.selectionActionsRow}>
-        <TouchableOpacity
-          style={[styles.paidButton, styles.selectionActionButton, selectedIds.size === 0 && styles.paidButtonDisabled]}
-          onPress={requestMarkSelectedAsPaid}
-          disabled={selectedIds.size === 0}
-        >
-          <Text style={styles.paidButtonText}>
-            Bezahlt{selectedIds.size > 0 ? ` (${selectedIds.size} · ${formatPrice(selectedTotal)})` : ''}
-          </Text>
-        </TouchableOpacity>
-        {/* Verschiebt nur die ausgewählten Positionen auf einen anderen Tisch (siehe
-            confirmMoveItems) — anders als "Tisch wechseln / zusammenführen" unten im Footer,
-            das den ganzen Tisch betrifft. */}
-        <TouchableOpacity
-          style={[styles.moveItemsButton, selectedIds.size === 0 && styles.moveItemsButtonDisabled]}
-          onPress={openMoveItemsDialog}
-          disabled={selectedIds.size === 0}
-        >
-          <Text style={styles.moveItemsButtonText}>
-            Verschieben{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity
+        style={[styles.paidButton, selectedIds.size === 0 && styles.paidButtonDisabled]}
+        onPress={requestMarkSelectedAsPaid}
+        disabled={selectedIds.size === 0}
+      >
+        <Text style={styles.paidButtonText}>
+          💳 Bezahlt{selectedIds.size > 0 ? ` (${selectedIds.size} · ${formatPrice(selectedTotal)})` : ''}
+        </Text>
+      </TouchableOpacity>
 
       <FlatList
         data={items}
@@ -604,11 +436,11 @@ export default function TableBillingScreen({ route, navigation }: Props) {
 
         {!showClosed && (
           <TouchableOpacity
-            style={[styles.moveTableButton, tableOrders.length === 0 && styles.moveTableButtonDisabled]}
-            onPress={openMoveDialog}
-            disabled={tableOrders.length === 0}
+            style={[styles.discountButton, items.length === 0 && styles.discountButtonDisabled]}
+            onPress={() => setDiscountOpen(true)}
+            disabled={items.length === 0}
           >
-            <Text style={styles.moveTableButtonText}>Tisch wechseln / zusammenführen</Text>
+            <Text style={styles.discountButtonText}>🏷️ Rabatt hinzufügen</Text>
           </TouchableOpacity>
         )}
 
@@ -664,37 +496,11 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         </View>
       </Modal>
 
-      <Modal visible={moveDialogOpen} transparent animationType="fade" onRequestClose={cancelMove}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Tisch {tableNumber} wechseln / zusammenführen</Text>
-            <Text style={styles.modalBody}>
-              Neue Tischnummer eingeben. Laufen dort schon Bestellungen, werden beide Tische zu einer gemeinsamen
-              Rechnung zusammengeführt — sonst zieht Tisch {tableNumber} einfach auf die neue Nummer um.
-            </Text>
-            <TextInput
-              style={styles.noteInput}
-              value={moveTargetText}
-              onChangeText={(text) => setMoveTargetText(text.replace(/[^0-9]/g, ''))}
-              placeholder="z.B. 12"
-              placeholderTextColor={styles.noteInputPlaceholder.color as string}
-              keyboardType="number-pad"
-              autoFocus
-            />
-            {moveError && <Text style={styles.errorText}>{moveError}</Text>}
-            <TouchableOpacity
-              style={[styles.paymentMethodButton, (moving || !moveTargetText) && styles.confirmButtonDisabled]}
-              onPress={confirmMove}
-              disabled={moving || !moveTargetText}
-            >
-              {moving ? <ActivityIndicator color="#fff" /> : <Text style={styles.paymentMethodButtonText}>Verschieben</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelButton} onPress={cancelMove} disabled={moving}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      <DiscountDialog
+        tableNumber={discountOpen ? tableNumber : null}
+        tableTotal={grandTotal}
+        onClose={() => setDiscountOpen(false)}
+      />
 
       <Modal
         visible={closeConfirmOpen}
@@ -792,40 +598,6 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal visible={moveItemsDialogOpen} transparent animationType="fade" onRequestClose={cancelMoveItems}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>
-              {selectedIds.size} Position(en) verschieben
-            </Text>
-            <Text style={styles.modalBody}>
-              Neue Tischnummer eingeben. Laufen dort schon Bestellungen, hängen sich die ausgewählten Positionen
-              dort an (gemeinsame Rechnung) — sonst wird für Tisch {moveItemsTargetText || '…'} eine neue Bestellung
-              angelegt. Der Rest von Tisch {tableNumber} bleibt unverändert hier stehen.
-            </Text>
-            <TextInput
-              style={styles.noteInput}
-              value={moveItemsTargetText}
-              onChangeText={(text) => setMoveItemsTargetText(text.replace(/[^0-9]/g, ''))}
-              placeholder="z.B. 12"
-              placeholderTextColor={styles.noteInputPlaceholder.color as string}
-              keyboardType="number-pad"
-              autoFocus
-            />
-            {moveItemsError && <Text style={styles.errorText}>{moveItemsError}</Text>}
-            <TouchableOpacity
-              style={[styles.paymentMethodButton, (movingItems || !moveItemsTargetText) && styles.confirmButtonDisabled]}
-              onPress={confirmMoveItems}
-              disabled={movingItems || !moveItemsTargetText}
-            >
-              {movingItems ? <ActivityIndicator color="#fff" /> : <Text style={styles.paymentMethodButtonText}>Verschieben</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelButton} onPress={cancelMoveItems} disabled={movingItems}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </View>
   );
 }
@@ -878,16 +650,6 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 8,
     },
     selectAction: { fontSize: 13, color: colors.primary, fontWeight: '600' },
-    // Bezahlt- und Verschieben-Button nebeneinander (siehe selectionActionsRow) — beide
-    // wirken auf dieselbe Checkbox-Auswahl (selectedIds), deshalb direkt nebeneinander statt
-    // wie vorher der Bezahlt-Button allein über die volle Breite.
-    selectionActionsRow: {
-      flexDirection: 'row',
-      gap: 10,
-      marginHorizontal: 16,
-      marginBottom: 12,
-    },
-    selectionActionButton: { flex: 1, marginHorizontal: 0, marginBottom: 0 },
     paidButton: {
       marginHorizontal: 16,
       marginBottom: 12,
@@ -898,20 +660,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     paidButtonDisabled: { backgroundColor: colors.textFaint },
     paidButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-    // "Verschieben"-Button für die ausgewählten Positionen (siehe confirmMoveItems) —
-    // dieselbe Outline-Optik wie moveTableButton unten im Footer (Primärfarbe statt eines
-    // vollflächigen Buttons), damit klar ist, dass es eine andere Art Aktion ist als
-    // "Bezahlt" (kein Geld-Vorgang, sondern eine Umbuchung).
-    moveItemsButton: {
-      flex: 1,
-      borderWidth: 1.5,
-      borderColor: colors.primary,
-      borderRadius: 10,
-      paddingVertical: 12,
-      alignItems: 'center',
-    },
-    moveItemsButtonDisabled: { borderColor: colors.borderStrong },
-    moveItemsButtonText: { color: colors.primary, fontSize: 15, fontWeight: '700' },
     listContent: { paddingHorizontal: 16, paddingBottom: 8 },
     itemRow: {
       flexDirection: 'row',
@@ -993,16 +741,17 @@ const createStyles = (colors: ThemeColors) =>
     footerLabel: { fontSize: 16, fontWeight: '700', color: colors.text },
     footerValue: { fontSize: 20, fontWeight: '800', color: colors.text },
     footerDisclaimer: { fontSize: 11, color: colors.textFaint, marginTop: 8, lineHeight: 15 },
-    moveTableButton: {
+    // "🏷️ Rabatt hinzufügen" über "Tisch abschließen" im Footer.
+    discountButton: {
       marginTop: 14,
       borderWidth: 1.5,
-      borderColor: colors.primary,
+      borderColor: colors.warning,
       borderRadius: 10,
       paddingVertical: 12,
       alignItems: 'center',
     },
-    moveTableButtonDisabled: { borderColor: colors.borderStrong },
-    moveTableButtonText: { color: colors.primary, fontSize: 15, fontWeight: '700' },
+    discountButtonDisabled: { borderColor: colors.borderStrong },
+    discountButtonText: { color: colors.warning, fontSize: 15, fontWeight: '700' },
     closeTableButton: {
       marginTop: 14,
       borderWidth: 1.5,
