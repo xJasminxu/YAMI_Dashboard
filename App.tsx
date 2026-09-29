@@ -5,6 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './src/navigation/RootNavigator';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
+import { LanguageProvider } from './src/i18n/LanguageContext';
 
 // Ohne diesen Aufruf bleibt iOS bei der Standard-Audiosession ("SoloAmbient"), die den
 // Ton stummschaltet, sobald der Stumm-Schalter am Gerät (bzw. die Stumm-Taste am iPad)
@@ -47,7 +48,9 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <ThemedNavigation />
+          <LanguageProvider>
+            <ThemedNavigation />
+          </LanguageProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

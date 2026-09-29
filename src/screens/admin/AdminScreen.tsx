@@ -21,6 +21,8 @@ import { supabase } from '../../lib/supabase';
 import type { ActivityKind, ActivityLogEntry, Category, ExtraOption, MenuItem, VariantOption } from '../../types/database';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
+import { translate, useI18n, type Language } from '../../i18n/LanguageContext';
+import type { StringKey } from '../../i18n/strings';
 
 type AdminStyles = ReturnType<typeof createStyles>;
 type Tab = 'menu' | 'log';
@@ -33,6 +35,7 @@ type Tab = 'menu' | 'log';
 //    letzten 3 Tage (activity_log, siehe lib/activityLog.ts) — ältere Einträge werden
 //    endgültig gelöscht.
 export default function AdminScreen() {
+  const { t } = useI18n();
   const styles = useThemedStyles(createStyles);
   const [unlocked, setUnlocked] = useState(false);
   const [tab, setTab] = useState<Tab>('menu');
@@ -45,10 +48,10 @@ export default function AdminScreen() {
     <View style={styles.container}>
       <View style={styles.tabBar}>
         <TouchableOpacity style={[styles.tab, tab === 'menu' && styles.tabActive]} onPress={() => setTab('menu')}>
-          <Text style={[styles.tabText, tab === 'menu' && styles.tabTextActive]}>🍜 Speisekarte</Text>
+          <Text style={[styles.tabText, tab === 'menu' && styles.tabTextActive]}>{t('adminTabMenu')}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.tab, tab === 'log' && styles.tabActive]} onPress={() => setTab('log')}>
-          <Text style={[styles.tabText, tab === 'log' && styles.tabTextActive]}>📜 Protokoll</Text>
+          <Text style={[styles.tabText, tab === 'log' && styles.tabTextActive]}>{t('adminTabLog')}</Text>
         </TouchableOpacity>
       </View>
       {tab === 'menu' ? <MenuEditor styles={styles} /> : <ActivityLog styles={styles} />}
@@ -61,6 +64,7 @@ export default function AdminScreen() {
 // ---------------------------------------------------------------------------
 
 function PinGate({ onUnlock, styles }: { onUnlock: () => void; styles: AdminStyles }) {
+  const { t } = useI18n();
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
 
@@ -80,8 +84,8 @@ function PinGate({ onUnlock, styles }: { onUnlock: () => void; styles: AdminStyl
     >
       <View style={styles.pinCard}>
         <Text style={styles.pinEmoji}>🔐</Text>
-        <Text style={styles.pinTitle}>Admin-Modus</Text>
-        <Text style={styles.pinSub}>PIN eingeben</Text>
+        <Text style={styles.pinTitle}>{t('adminMode')}</Text>
+        <Text style={styles.pinSub}>{t('enterPin')}</Text>
         <TextInput
           style={styles.pinInput}
           value={pin}
@@ -97,13 +101,13 @@ function PinGate({ onUnlock, styles }: { onUnlock: () => void; styles: AdminStyl
           maxLength={4}
           autoFocus
         />
-        {error && <Text style={styles.errorText}>Falsche PIN.</Text>}
+        {error && <Text style={styles.errorText}>{t('wrongPin')}</Text>}
         <TouchableOpacity
           style={[styles.primaryButton, !pin && styles.primaryButtonDisabled]}
           onPress={submit}
           disabled={!pin}
         >
-          <Text style={styles.primaryButtonText}>Entsperren</Text>
+          <Text style={styles.primaryButtonText}>{t('unlock')}</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -132,16 +136,17 @@ function priceToText(price: number | null | undefined): string {
   return price === null || price === undefined ? '' : price.toFixed(2).replace('.', ',');
 }
 
-function itemPriceSummary(item: MenuItem): string {
+function itemPriceSummary(item: MenuItem, lang: Language): string {
   if (item.price !== null) return formatPrice(item.price);
   const variantPrices = (item.variant_options ?? [])
     .map((v) => v.price)
     .filter((p): p is number => typeof p === 'number');
-  if (variantPrices.length > 0) return `ab ${formatPrice(Math.min(...variantPrices))}`;
-  return 'kein Preis';
+  if (variantPrices.length > 0) return translate(lang, 'fromPrice', { price: formatPrice(Math.min(...variantPrices)) });
+  return translate(lang, 'noPrice');
 }
 
 function MenuEditor({ styles }: { styles: AdminStyles }) {
+  const { lang, t } = useI18n();
   const [categories, setCategories] = useState<Category[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,7 +162,7 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
       supabase.from('menu_items').select('*').order('created_at', { ascending: true }),
     ]);
     if (categoriesRes.error || itemsRes.error) {
-      setError(categoriesRes.error?.message ?? itemsRes.error?.message ?? 'Unbekannter Fehler');
+      setError(categoriesRes.error?.message ?? itemsRes.error?.message ?? t('unknownError'));
     } else {
       setError(null);
       // Rabatt-Kategorie ist kein Speisekarten-Eintrag (siehe OrderScreen), "Diverses"-
@@ -229,13 +234,10 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
           style={styles.searchInput}
           value={search}
           onChangeText={setSearch}
-          placeholder="🔎 Gericht, Code oder Hanzi suchen"
+          placeholder={t('searchDish')}
           placeholderTextColor={styles.placeholder.color as string}
         />
-        <Text style={styles.hint}>
-          Änderungen gelten sofort. Die Bestellung-Ansicht zeigt sie nach dem nächsten Öffnen. Preisänderungen
-          wirken nicht auf bereits aufgenommene Bestellungen.
-        </Text>
+        <Text style={styles.hint}>{t('adminHint')}</Text>
         {error && <Text style={styles.errorText}>{error}</Text>}
 
         {grouped.map(({ category, active, hidden }) => {
@@ -245,15 +247,16 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
               <TouchableOpacity style={styles.categoryHeader} onPress={() => toggleCategory(category.id)}>
                 <Text style={styles.categoryEmoji}>{categoryEmoji(category.name_de, category.menu_group)}</Text>
                 <View style={styles.categoryTitleWrap}>
-                  <Text style={styles.categoryTitle}>{titleCase(category.name_de)}</Text>
+                  <Text style={styles.categoryTitle}>{categoryName(category, lang)}</Text>
                   <Text style={styles.categorySub}>
-                    {active.length} aktiv{hidden.length > 0 ? ` · ${hidden.length} ausgeblendet` : ''}
+                    {t('activeCount', { n: active.length })}
+                    {hidden.length > 0 ? t('hiddenCount', { n: hidden.length }) : ''}
                   </Text>
                 </View>
                 <TouchableOpacity
                   style={styles.addButton}
                   onPress={() => setEditor({ mode: 'new', category, item: null })}
-                  accessibilityLabel={`Neues Gericht in ${category.name_de}`}
+                  accessibilityLabel={t('newDishIn', { category: categoryName(category, lang) })}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Text style={styles.addButtonText}>＋</Text>
@@ -264,7 +267,7 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
               {open && (
                 <View>
                   {active.length === 0 && hidden.length === 0 && (
-                    <Text style={styles.emptyText}>Noch keine Gerichte — mit ＋ anlegen.</Text>
+                    <Text style={styles.emptyText}>{t('noDishesYet')}</Text>
                   )}
                   {active.map((item) => (
                     <MenuItemRow
@@ -276,7 +279,7 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
                       styles={styles}
                     />
                   ))}
-                  {hidden.length > 0 && <Text style={styles.hiddenLabel}>🙈 Ausgeblendet</Text>}
+                  {hidden.length > 0 && <Text style={styles.hiddenLabel}>{t('hiddenSection')}</Text>}
                   {hidden.map((item) => (
                     <MenuItemRow
                       key={item.id}
@@ -324,9 +327,10 @@ function MenuItemRow({
   onToggleActive: () => void;
   styles: AdminStyles;
 }) {
+  const { lang, t } = useI18n();
   return (
     <View style={[styles.itemRow, !item.active && styles.itemRowHidden]}>
-      <TouchableOpacity style={styles.itemMain} onPress={onEdit} accessibilityLabel={`${item.name_de} bearbeiten`}>
+      <TouchableOpacity style={styles.itemMain} onPress={onEdit} accessibilityLabel={t('editDish', { name: item.name_de })}>
         {item.item_code && (
           <View style={styles.codeBadge}>
             <Text style={styles.codeBadgeText}>{item.item_code}</Text>
@@ -343,13 +347,13 @@ function MenuItemRow({
           )}
         </View>
         <Text style={[styles.itemPrice, item.price === null && !item.variant_options?.length && styles.itemPriceMissing]}>
-          {itemPriceSummary(item)}
+          {itemPriceSummary(item, lang)}
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.iconButton}
         onPress={onEdit}
-        accessibilityLabel="Bearbeiten"
+        accessibilityLabel={t('edit')}
         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       >
         <Text style={styles.iconButtonText}>✏️</Text>
@@ -358,7 +362,7 @@ function MenuItemRow({
         style={[styles.iconButton, item.active ? styles.iconButtonDanger : styles.iconButtonRestore]}
         onPress={onToggleActive}
         disabled={busy}
-        accessibilityLabel={item.active ? 'Aus der Speisekarte entfernen' : 'Wiederherstellen'}
+        accessibilityLabel={item.active ? t('removeFromMenu') : t('restore')}
         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       >
         {busy ? <ActivityIndicator size="small" /> : <Text style={styles.iconButtonText}>{item.active ? '🗑️' : '↩️'}</Text>}
@@ -378,6 +382,7 @@ function ItemEditorDialog({
   onSaved: (item: MenuItem) => void;
   styles: AdminStyles;
 }) {
+  const { lang, t } = useI18n();
   const [nameHanzi, setNameHanzi] = useState('');
   const [nameDe, setNameDe] = useState('');
   const [code, setCode] = useState('');
@@ -415,13 +420,13 @@ function ItemEditorDialog({
     if (!state) return;
     const trimmedDe = nameDe.trim();
     if (!trimmedDe) {
-      setError('Bitte einen deutschen Namen eingeben.');
+      setError(t('errNameRequired'));
       return;
     }
 
     const price = hasVariants ? null : parsePrice(priceText);
     if (price === 'invalid') {
-      setError('Preis ist ungültig (z.B. 12,90).');
+      setError(t('errPriceInvalid'));
       return;
     }
 
@@ -429,7 +434,7 @@ function ItemEditorDialog({
     for (let i = 0; i < variants.length; i += 1) {
       const parsed = parsePrice(variantPrices[i] ?? '');
       if (parsed === 'invalid') {
-        setError(`Preis für "${variants[i].name_de}" ist ungültig.`);
+        setError(t('errVariantPrice', { name: variants[i].name_de }));
         return;
       }
       const { price: _old, ...rest } = variants[i];
@@ -440,7 +445,7 @@ function ItemEditorDialog({
     for (let i = 0; i < extras.length; i += 1) {
       const parsed = parsePrice(extraPrices[i] ?? '');
       if (parsed === 'invalid') {
-        setError(`Preis für Extra "${extras[i].name_de}" ist ungültig.`);
+        setError(t('errExtraPrice', { name: extras[i].name_de }));
         return;
       }
       const { price: _old, ...rest } = extras[i];
@@ -471,10 +476,10 @@ function ItemEditorDialog({
     setSaving(false);
 
     if (result.error || !result.data) {
-      const message = result.error?.message ?? 'Speichern fehlgeschlagen.';
+      const message = result.error?.message ?? t('errSaveFailed');
       setError(
         message.includes('duplicate') || message.includes('unique')
-          ? 'In dieser Kategorie gibt es schon ein Gericht mit diesem Namen (evtl. ausgeblendet — dort mit ↩️ wiederherstellen).'
+          ? t('errDuplicate')
           : message
       );
       return;
@@ -492,10 +497,10 @@ function ItemEditorDialog({
               {state.mode === 'new' ? '✨' : '✏️'} {categoryEmoji(state.category.name_de, state.category.menu_group)}
             </Text>
             <Text style={styles.modalTitle}>
-              {state.mode === 'new' ? `Neu in ${titleCase(state.category.name_de)}` : 'Gericht bearbeiten'}
+              {state.mode === 'new' ? t('newIn', { category: categoryName(state.category, lang) }) : t('editDishTitle')}
             </Text>
 
-            <Text style={styles.fieldLabel}>Name (Deutsch) *</Text>
+            <Text style={styles.fieldLabel}>{t('fieldNameDe')}</Text>
             <TextInput
               style={styles.input}
               value={nameDe}
@@ -503,17 +508,17 @@ function ItemEditorDialog({
               placeholder="z.B. Tonkotsu Ramen"
               placeholderTextColor={styles.placeholder.color as string}
             />
-            <Text style={styles.fieldLabel}>Name (Hanzi) — für die Küche</Text>
+            <Text style={styles.fieldLabel}>{t('fieldNameHanzi')}</Text>
             <TextInput
               style={styles.input}
               value={nameHanzi}
               onChangeText={setNameHanzi}
-              placeholder="z.B. 豚骨拉面 (optional)"
+              placeholder={t('fieldNameHanziPlaceholder')}
               placeholderTextColor={styles.placeholder.color as string}
             />
             <View style={styles.fieldRow}>
               <View style={styles.fieldHalf}>
-                <Text style={styles.fieldLabel}>Code</Text>
+                <Text style={styles.fieldLabel}>{t('fieldCode')}</Text>
                 <TextInput
                   style={styles.input}
                   value={code}
@@ -525,7 +530,7 @@ function ItemEditorDialog({
               </View>
               {!hasVariants && (
                 <View style={styles.fieldHalf}>
-                  <Text style={styles.fieldLabel}>Preis (€)</Text>
+                  <Text style={styles.fieldLabel}>{t('fieldPrice')}</Text>
                   <TextInput
                     style={[styles.input, styles.priceInput]}
                     value={priceText}
@@ -540,7 +545,7 @@ function ItemEditorDialog({
 
             {hasVariants && (
               <>
-                <Text style={styles.sectionLabel}>Preis je Variante</Text>
+                <Text style={styles.sectionLabel}>{t('pricePerVariant')}</Text>
                 {variants.map((variant, index) => (
                   <View key={variant.name_de} style={styles.optionPriceRow}>
                     <Text style={styles.optionName} numberOfLines={1}>
@@ -564,7 +569,7 @@ function ItemEditorDialog({
 
             {extras.length > 0 && (
               <>
-                <Text style={styles.sectionLabel}>Preis je Extra</Text>
+                <Text style={styles.sectionLabel}>{t('pricePerExtra')}</Text>
                 {extras.map((extra, index) => (
                   <View key={extra.name_de} style={styles.optionPriceRow}>
                     <Text style={styles.optionName} numberOfLines={1}>
@@ -593,11 +598,11 @@ function ItemEditorDialog({
               {saving ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.primaryButtonText}>{state.mode === 'new' ? '✨ Anlegen' : '💾 Speichern'}</Text>
+                <Text style={styles.primaryButtonText}>{state.mode === 'new' ? t('create') : t('saveWithIcon')}</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={saving}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -610,20 +615,28 @@ function ItemEditorDialog({
 // Protokoll
 // ---------------------------------------------------------------------------
 
-const KIND_META: Record<ActivityKind, { icon: string; label: string }> = {
-  table_deleted: { icon: '🗑️', label: 'Tisch gelöscht' },
-  item_deleted: { icon: '❌', label: 'Position entfernt' },
-  discount_applied: { icon: '🏷️', label: 'Rabatt' },
+const KIND_META: Record<ActivityKind, { icon: string; label: StringKey }> = {
+  table_deleted: { icon: '🗑️', label: 'kindTableDeleted' },
+  item_deleted: { icon: '❌', label: 'kindItemDeleted' },
+  discount_applied: { icon: '🏷️', label: 'kindDiscount' },
 };
 
-function expiresIn(createdAt: string): string {
+// Kategoriename in der gewählten Sprache: Speisen auf Chinesisch mit Hanzi,
+// Bar-Kategorien (ohne Hanzi) bleiben Deutsch.
+function categoryName(category: Category, lang: Language): string {
+  if (lang === 'zh' && category.name_hanzi) return category.name_hanzi;
+  return titleCase(category.name_de);
+}
+
+function expiresIn(createdAt: string, lang: Language): string {
   const expiresAt = new Date(createdAt).getTime() + ACTIVITY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const hours = Math.max(0, Math.round((expiresAt - Date.now()) / (60 * 60 * 1000)));
-  if (hours >= 24) return `noch ${Math.floor(hours / 24)} T ${hours % 24} h`;
-  return `noch ${hours} h`;
+  if (hours >= 24) return translate(lang, 'expiresDaysHours', { d: Math.floor(hours / 24), h: hours % 24 });
+  return translate(lang, 'expiresHours', { h: hours });
 }
 
 function ActivityLog({ styles }: { styles: AdminStyles }) {
+  const { lang, t } = useI18n();
   const [entries, setEntries] = useState<ActivityLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -672,7 +685,7 @@ function ActivityLog({ styles }: { styles: AdminStyles }) {
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
       <View style={styles.logHeader}>
         <Text style={styles.logRetention}>
-          ⏱️ Einträge werden nach {ACTIVITY_RETENTION_DAYS} Tagen automatisch endgültig gelöscht.
+          {t('retentionNote', { n: ACTIVITY_RETENTION_DAYS })}
         </Text>
         <TouchableOpacity
           style={styles.refreshButton}
@@ -680,7 +693,7 @@ function ActivityLog({ styles }: { styles: AdminStyles }) {
             setRefreshing(true);
             load();
           }}
-          accessibilityLabel="Aktualisieren"
+          accessibilityLabel={t('refresh')}
         >
           {refreshing ? <ActivityIndicator size="small" /> : <Text style={styles.iconButtonText}>🔄</Text>}
         </TouchableOpacity>
@@ -697,7 +710,7 @@ function ActivityLog({ styles }: { styles: AdminStyles }) {
               onPress={() => setFilter(kind)}
             >
               <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
-                {kind === 'all' ? 'Alle' : `${KIND_META[kind].icon} ${KIND_META[kind].label}`} ({count})
+                {kind === 'all' ? t('all') : `${KIND_META[kind].icon} ${t(KIND_META[kind].label)}`} ({count})
               </Text>
             </TouchableOpacity>
           );
@@ -705,11 +718,11 @@ function ActivityLog({ styles }: { styles: AdminStyles }) {
       </View>
 
       {discountTotal !== 0 && (filter === 'all' || filter === 'discount_applied') && (
-        <Text style={styles.logSummary}>🏷️ Rabatte gesamt (3 Tage): {formatPrice(discountTotal)}</Text>
+        <Text style={styles.logSummary}>{t('discountTotal', { n: ACTIVITY_RETENTION_DAYS, sum: formatPrice(discountTotal) })}</Text>
       )}
 
       {error && <Text style={styles.errorText}>{error}</Text>}
-      {visible.length === 0 && <Text style={styles.emptyText}>Keine Einträge in den letzten {ACTIVITY_RETENTION_DAYS} Tagen.</Text>}
+      {visible.length === 0 && <Text style={styles.emptyText}>{t('noLogEntries', { n: ACTIVITY_RETENTION_DAYS })}</Text>}
 
       {visible.map((entry) => {
         const meta = KIND_META[entry.kind];
@@ -728,7 +741,7 @@ function ActivityLog({ styles }: { styles: AdminStyles }) {
                 <Text style={styles.logSummaryText}>{entry.summary}</Text>
                 <Text style={styles.logMeta}>
                   {formatDateTime(entry.created_at)}
-                  {entry.table_number !== null ? ` · 🪑 Tisch ${entry.table_number}` : ''} · {expiresIn(entry.created_at)}
+                  {entry.table_number !== null ? ` · 🪑 ${t('table', { n: entry.table_number })}` : ''} · {expiresIn(entry.created_at, lang)}
                 </Text>
               </View>
               {entry.amount !== null && (
@@ -739,7 +752,7 @@ function ActivityLog({ styles }: { styles: AdminStyles }) {
             </View>
             {hasDetails && (
               <Text style={styles.logDetailsToggle}>
-                {open ? '▾' : '▸'} {entry.details!.length} Positionen
+                {open ? '▾' : '▸'} {t('positionsCount', { n: entry.details!.length })}
               </Text>
             )}
             {open &&

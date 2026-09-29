@@ -18,6 +18,7 @@ import { formatDateTime } from '../../lib/datetime';
 import { itemTotal, formatPrice } from '../../lib/pricing';
 import { logActivity } from '../../lib/activityLog';
 import DiscountDialog from '../../components/DiscountDialog';
+import { useI18n } from '../../i18n/LanguageContext';
 import { supabase } from '../../lib/supabase';
 import type { RootStackParamList } from '../../navigation/types';
 import type { ThemeColors } from '../../theme/colors';
@@ -62,6 +63,7 @@ interface TableRow {
 // aktiven Küche/Bar/Status-Ansicht raus, damit man bei Rückfragen noch reinschauen kann.
 // includeClosed:true holt beide Gruppen über denselben Hook.
 export default function TableOverviewScreen({ navigation }: Props) {
+  const { t } = useI18n();
   const styles = useThemedStyles(createStyles);
   const kitchen = useDeviceOrders('kitchen', { includeClosed: true });
   const bar = useDeviceOrders('bar', { includeClosed: true });
@@ -180,7 +182,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
     if (!deleteTarget) return;
 
     if (deletePin !== ADMIN_PIN) {
-      setDeleteError('Falsche PIN.');
+      setDeleteError(t('wrongPin'));
       return;
     }
 
@@ -278,7 +280,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
       .select()
       .single();
     if (error || !data) {
-      setMoveError(error?.message ?? 'Tisch konnte nicht angelegt werden.');
+      setMoveError(error?.message ?? t('tableCreateError'));
       return null;
     }
     return data.id as string;
@@ -287,7 +289,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
   function parseTarget(source: TableRow): number | null {
     const targetNumber = parseInt(moveTargetText, 10);
     if (!targetNumber || targetNumber === source.tableNumber) {
-      setMoveError('Bitte eine andere, gültige Tischnummer wählen.');
+      setMoveError(t('invalidTargetTable'));
       return null;
     }
     return targetNumber;
@@ -362,7 +364,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
         .single();
       if (createError || !newOrder) {
         setMoving(false);
-        setMoveError(createError?.message ?? 'Bestellung konnte nicht angelegt werden.');
+        setMoveError(createError?.message ?? t('orderCreateError'));
         return;
       }
       targetOrderId = newOrder.id;
@@ -394,7 +396,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
   if (loadError) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Tischübersicht konnte nicht geladen werden: {loadError}</Text>
+        <Text style={styles.errorText}>{t('overviewLoadError', { error: loadError })}</Text>
       </View>
     );
   }
@@ -407,14 +409,14 @@ export default function TableOverviewScreen({ navigation }: Props) {
             style={[styles.tab, tab === 'aktuell' && styles.tabActive]}
             onPress={() => setTab('aktuell')}
           >
-            <Text style={[styles.tabText, tab === 'aktuell' && styles.tabTextActive]}>🪑 Aktuell ({current.length})</Text>
+            <Text style={[styles.tabText, tab === 'aktuell' && styles.tabTextActive]}>{t('tabCurrent', { n: current.length })}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tab, tab === 'vergangen' && styles.tabActive]}
             onPress={() => setTab('vergangen')}
           >
             <Text style={[styles.tabText, tab === 'vergangen' && styles.tabTextActive]}>
-              🕓 Vergangene Tische ({past.length})
+              {t('tabPast', { n: past.length })}
             </Text>
           </TouchableOpacity>
         </View>
@@ -427,8 +429,10 @@ export default function TableOverviewScreen({ navigation }: Props) {
             <View style={styles.occupiedCard}>
               <Text style={styles.occupiedTitle}>
                 {current.length === 0
-                  ? 'Keine Tische belegt'
-                  : `${current.length} ${current.length === 1 ? 'Tisch' : 'Tische'} belegt`}
+                  ? t('noTablesOccupied')
+                  : current.length === 1
+                    ? t('oneTableOccupied')
+                    : t('tablesOccupied', { n: current.length })}
               </Text>
               {current.length > 0 && (
                 <View style={styles.occupiedGrid}>
@@ -439,7 +443,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
                         key={row.tableNumber}
                         style={[styles.occupiedTile, allDone ? styles.occupiedTileDone : styles.occupiedTileOpen]}
                         onPress={() => navigation.navigate('TableBilling', { tableNumber: row.tableNumber })}
-                        accessibilityLabel={`Tisch ${row.tableNumber}, ${row.done} von ${row.total} fertig`}
+                        accessibilityLabel={t('tileA11y', { n: row.tableNumber, done: row.done, total: row.total })}
                       >
                         <Text style={styles.occupiedTileNumber}>{row.tableNumber}</Text>
                         <Text style={styles.occupiedTileMeta}>
@@ -466,12 +470,12 @@ export default function TableOverviewScreen({ navigation }: Props) {
               />
             ))}
             {current.some((row) => row.hasUnpriced) && (
-              <Text style={styles.footnote}>* enthält Positionen ohne hinterlegten Preis, nicht in der Summe enthalten.</Text>
+              <Text style={styles.footnote}>{t('unpricedFootnote')}</Text>
             )}
           </>
         ) : (
           <>
-            {past.length === 0 && <Text style={styles.emptyText}>Heute noch keine Tische abgeschlossen.</Text>}
+            {past.length === 0 && <Text style={styles.emptyText}>{t('noPastTables')}</Text>}
             {past.map((row) => (
               <TableCard
                 key={`${row.tableNumber}::${row.closedAt}`}
@@ -490,7 +494,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
               />
             ))}
             {past.some((row) => row.hasUnpriced) && (
-              <Text style={styles.footnote}>* enthält Positionen ohne hinterlegten Preis, nicht in der Summe enthalten.</Text>
+              <Text style={styles.footnote}>{t('unpricedFootnote')}</Text>
             )}
           </>
         )}
@@ -507,8 +511,8 @@ export default function TableOverviewScreen({ navigation }: Props) {
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalEmoji}>🔀</Text>
-            <Text style={styles.modalTitle}>Tisch {moveTableSource?.tableNumber} umziehen</Text>
-            <Text style={styles.modalBody}>Wohin? Bei einem belegten Tisch werden beide Rechnungen zusammengeführt.</Text>
+            <Text style={styles.modalTitle}>{t('moveTableTitle', { n: moveTableSource?.tableNumber ?? '' })}</Text>
+            <Text style={styles.modalBody}>{t('moveTableBody')}</Text>
             {moveTableSource && (
               <TargetTablePicker
                 sourceNumber={moveTableSource.tableNumber}
@@ -529,15 +533,15 @@ export default function TableOverviewScreen({ navigation }: Props) {
               ) : (
                 <Text style={styles.primaryButtonText}>
                   {moveTargetText && current.some((r) => r.tableNumber === parseInt(moveTargetText, 10))
-                    ? `🔗 Mit Tisch ${moveTargetText} zusammenführen`
+                    ? t('mergeWith', { n: moveTargetText })
                     : moveTargetText
-                      ? `➡️ Nach Tisch ${moveTargetText} umziehen`
-                      : 'Zieltisch wählen'}
+                      ? t('moveTo', { n: moveTargetText })
+                      : t('chooseTargetTable')}
                 </Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={closeMoveDialogs} disabled={moving}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -547,8 +551,8 @@ export default function TableOverviewScreen({ navigation }: Props) {
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.modalCard, styles.modalCardTall]}>
             <Text style={styles.modalEmoji}>✂️</Text>
-            <Text style={styles.modalTitle}>Positionen von Tisch {moveItemsSource?.tableNumber} verschieben</Text>
-            <Text style={styles.modalStep}>1 · Positionen antippen</Text>
+            <Text style={styles.modalTitle}>{t('moveItemsTitle', { n: moveItemsSource?.tableNumber ?? '' })}</Text>
+            <Text style={styles.modalStep}>{t('stepPickItems')}</Text>
             <ScrollView style={styles.moveItemsList}>
               {(moveItemsSource ? openItemsByTable.get(moveItemsSource.tableNumber) ?? [] : []).map((item) => {
                 const selected = moveItemIds.has(item.id);
@@ -580,7 +584,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
                 );
               })}
             </ScrollView>
-            <Text style={styles.modalStep}>2 · Zieltisch wählen</Text>
+            <Text style={styles.modalStep}>{t('stepPickTarget')}</Text>
             {moveItemsSource && (
               <TargetTablePicker
                 sourceNumber={moveItemsSource.tableNumber}
@@ -604,15 +608,15 @@ export default function TableOverviewScreen({ navigation }: Props) {
               ) : (
                 <Text style={styles.primaryButtonText}>
                   {moveItemIds.size === 0
-                    ? 'Positionen auswählen'
+                    ? t('pickItems')
                     : !moveTargetText
-                      ? `${moveItemIds.size} ausgewählt · Zieltisch wählen`
-                      : `➡️ ${moveItemIds.size} nach Tisch ${moveTargetText}`}
+                      ? t('selectedPickTarget', { n: moveItemIds.size })
+                      : t('moveItemsTo', { n: moveItemIds.size, table: moveTargetText })}
                 </Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={closeMoveDialogs} disabled={moving}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -622,11 +626,9 @@ export default function TableOverviewScreen({ navigation }: Props) {
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalEmoji}>🗑️</Text>
-            <Text style={styles.modalTitle}>Tisch {deleteTarget?.row.tableNumber} löschen?</Text>
+            <Text style={styles.modalTitle}>{t('deleteTableTitle', { n: deleteTarget?.row.tableNumber ?? '' })}</Text>
             <Text style={styles.modalBody}>
-              Löscht {deleteTarget?.past ? 'die abgeschlossene Bestellung' : 'alle offenen Bestellungen'} dieses
-              Tisches unwiderruflich — nicht rückgängig zu machen. Der Tisch selbst bleibt erhalten und ist für
-              neue Bestellungen weiter nutzbar.
+              {deleteTarget?.past ? t('deleteTableBodyPast') : t('deleteTableBodyOpen')}
             </Text>
             <TextInput
               style={styles.pinInput}
@@ -645,10 +647,10 @@ export default function TableOverviewScreen({ navigation }: Props) {
               onPress={confirmDeleteTable}
               disabled={deleting || !deletePin}
             >
-              {deleting ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmButtonText}>Ja, löschen</Text>}
+              {deleting ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmButtonText}>{t('confirmDelete')}</Text>}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelDeleteTable} disabled={deleting}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -673,6 +675,7 @@ function TargetTablePicker({
   onChange: (value: string) => void;
   styles: OverviewStyles;
 }) {
+  const { t } = useI18n();
   const others = openTables.filter((row) => row.tableNumber !== sourceNumber);
   return (
     <View style={styles.targetPicker}>
@@ -696,7 +699,7 @@ function TargetTablePicker({
         style={styles.targetInput}
         value={value}
         onChangeText={(text) => onChange(text.replace(/[^0-9]/g, ''))}
-        placeholder="🪑 Andere Tischnummer"
+        placeholder={t('otherTableNumber')}
         placeholderTextColor={styles.pinInputPlaceholder.color as string}
         keyboardType="number-pad"
         maxLength={3}
@@ -759,21 +762,22 @@ function TableCard({
   onDelete: () => void;
   styles: OverviewStyles;
 }) {
+  const { t } = useI18n();
   return (
     <View style={[styles.card, past && styles.cardPast]}>
       <TouchableOpacity style={styles.cardMain} onPress={onPress}>
         <View style={styles.cardLeft}>
           <View style={styles.tableLabelRow}>
-            <Text style={styles.tableLabel}>🪑 Tisch {row.tableNumber}</Text>
+            <Text style={styles.tableLabel}>🪑 {t('table', { n: row.tableNumber })}</Text>
             {/* Reiner Hinweis, dass eine Notiz existiert — bearbeitet wird sie ausschließlich
                 in TableBillingScreen.tsx (Checkout). */}
             {row.note && <Text style={styles.noteIndicator}>📝</Text>}
           </View>
           {past && row.closedAt && (
-            <Text style={styles.closedAtText}>Abgeschlossen: {formatDateTime(row.closedAt)}</Text>
+            <Text style={styles.closedAtText}>{t('closedAt', { time: formatDateTime(row.closedAt) })}</Text>
           )}
           <Text style={styles.progressText}>
-            {row.total > 0 && row.done === row.total ? '✅' : '⏳'} {row.done}/{row.total} fertig
+            {row.total > 0 && row.done === row.total ? '✅' : '⏳'} {t('doneOfTotal', { done: row.done, total: row.total })}
           </Text>
         </View>
         <View style={styles.cardRight}>
@@ -781,20 +785,20 @@ function TableCard({
             {formatPrice(row.priceSum)}
             {row.hasUnpriced ? '*' : ''}
           </Text>
-          <Text style={styles.openBillHint}>🧾 Abrechnung ›</Text>
+          <Text style={styles.openBillHint}>{t('openBill')}</Text>
         </View>
       </TouchableOpacity>
       <View style={styles.cardActions}>
-        <IconButton icon="➕" label="Neue Bestellung für diesen Tisch" onPress={onNewOrder} styles={styles} />
+        <IconButton icon="➕" label={t('a11yNewOrder')} onPress={onNewOrder} styles={styles} />
         {onMoveTable && (
-          <IconButton icon="🔀" label="Tisch wechseln oder zusammenführen" onPress={onMoveTable} styles={styles} />
+          <IconButton icon="🔀" label={t('a11yMoveTable')} onPress={onMoveTable} styles={styles} />
         )}
         {onMoveItems && (
-          <IconButton icon="✂️" label="Einzelne Positionen verschieben" onPress={onMoveItems} styles={styles} />
+          <IconButton icon="✂️" label={t('a11yMoveItems')} onPress={onMoveItems} styles={styles} />
         )}
-        {onDiscount && <IconButton icon="🏷️" label="Rabatt hinzufügen" onPress={onDiscount} styles={styles} />}
+        {onDiscount && <IconButton icon="🏷️" label={t('a11yDiscount')} onPress={onDiscount} styles={styles} />}
         <View style={styles.cardActionsSpacer} />
-        <IconButton icon="🗑️" label="Bestellungen dieses Tisches löschen" onPress={onDelete} danger styles={styles} />
+        <IconButton icon="🗑️" label={t('a11yDeleteTable')} onPress={onDelete} danger styles={styles} />
       </View>
     </View>
   );

@@ -11,10 +11,12 @@ import {
   SECTION_META,
   SECTIONS,
   sectionFor,
+  sectionLabel,
   type Section,
 } from '../../lib/sections';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
+import { useI18n } from '../../i18n/LanguageContext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Status'>;
 type StatusStyles = ReturnType<typeof createStyles>;
@@ -65,6 +67,7 @@ function emptySections(): Record<Section, DeviceOrderItem[]> {
 // wie Küche/Bar.
 export default function StatusScreen({ navigation }: Props) {
   const styles = useThemedStyles(createStyles);
+  const { lang, t } = useI18n();
   const kitchen = useDeviceOrders('kitchen');
   const bar = useDeviceOrders('bar');
   const [filter, setFilter] = useState<Section | 'all'>('all');
@@ -144,7 +147,7 @@ export default function StatusScreen({ navigation }: Props) {
   if (loadError) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Status konnte nicht geladen werden: {loadError}</Text>
+        <Text style={styles.errorText}>{t('statusLoadError', { error: loadError })}</Text>
       </View>
     );
   }
@@ -153,7 +156,7 @@ export default function StatusScreen({ navigation }: Props) {
     <View style={styles.container}>
       {ready.length > 0 && (
         <View style={styles.readyBar}>
-          <Text style={styles.readyTitle}>🛎️ Abholbereit aus der Küche</Text>
+          <Text style={styles.readyTitle}>{t('readyTitle')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.readyContent}>
             {ready.map((entry) => (
               <View key={entry.id} style={styles.readyChip}>
@@ -163,7 +166,7 @@ export default function StatusScreen({ navigation }: Props) {
                     {dishLabel(entry.item)}
                   </Text>
                   <Text style={styles.readyMeta}>
-                    {formatTime(entry.doneAt)} · vor {minutesSince(entry.doneAt, now)} min
+                    {formatTime(entry.doneAt)} · {t('minutesAgo', { n: minutesSince(entry.doneAt, now) })}
                   </Text>
                 </View>
               </View>
@@ -177,7 +180,7 @@ export default function StatusScreen({ navigation }: Props) {
             die Zahl zeigt, wie viele Portionen in diesem Bereich insgesamt noch offen sind. */}
         <View style={styles.filterRow}>
           <FilterChip
-            label={`Alle (${rows.length})`}
+            label={t('filterAll', { n: rows.length })}
             active={filter === 'all'}
             onPress={() => setFilter('all')}
             styles={styles}
@@ -186,7 +189,7 @@ export default function StatusScreen({ navigation }: Props) {
             <FilterChip
               key={section}
               label={`${SECTION_META[section].icon} ${sectionTotals[section]}`}
-              accessibilityLabel={`${SECTION_META[section].label}: ${sectionTotals[section]} offen`}
+              accessibilityLabel={t('sectionOpenCount', { section: sectionLabel(section, lang), n: sectionTotals[section] })}
               active={filter === section}
               dim={sectionTotals[section] === 0}
               onPress={() => setFilter(filter === section ? 'all' : section)}
@@ -197,22 +200,22 @@ export default function StatusScreen({ navigation }: Props) {
 
         <View style={styles.sortRow}>
           <Text style={styles.sortLabel}>
-            {visibleRows.length} {visibleRows.length === 1 ? 'Tisch' : 'Tische'} offen
-            {filter !== 'all' ? ` · ${SECTION_META[filter].label}` : ''}
+            {visibleRows.length === 1 ? t('tableOpen') : t('tablesOpen', { n: visibleRows.length })}
+            {filter !== 'all' ? ` · ${sectionLabel(filter, lang)}` : ''}
           </Text>
           <TouchableOpacity
             style={styles.sortToggle}
             onPress={() => setSortMode(sortMode === 'wait' ? 'table' : 'wait')}
           >
             <Text style={styles.sortToggleText}>
-              {sortMode === 'wait' ? '⏱️ Längste Wartezeit zuerst' : '🔢 Nach Tischnummer'}
+              {sortMode === 'wait' ? t('sortWait') : t('sortTable')}
             </Text>
           </TouchableOpacity>
         </View>
 
         {visibleRows.length === 0 && (
           <Text style={styles.emptyText}>
-            {filter === 'all' ? 'Keine offenen Tische. 🎉' : `Nichts offen in ${SECTION_META[filter].label}.`}
+            {filter === 'all' ? t('noOpenTables') : t('nothingOpenIn', { section: sectionLabel(filter, lang) })}
           </Text>
         )}
 
@@ -229,9 +232,9 @@ export default function StatusScreen({ navigation }: Props) {
               activeOpacity={0.8}
             >
               <View style={styles.cardHeader}>
-                <Text style={styles.tableLabel}>🪑 Tisch {row.tableNumber}</Text>
+                <Text style={styles.tableLabel}>🪑 {t('table', { n: row.tableNumber })}</Text>
                 <View style={[styles.waitPill, waitStyle]}>
-                  <Text style={styles.waitText}>⏱️ {waited} min</Text>
+                  <Text style={styles.waitText}>⏱️ {t('minutes', { n: waited })}</Text>
                 </View>
               </View>
               <View style={styles.progressRow}>
@@ -239,7 +242,7 @@ export default function StatusScreen({ navigation }: Props) {
                   <View style={[styles.progressFill, { width: `${(row.done / row.total) * 100}%` }]} />
                 </View>
                 <Text style={styles.progressText}>
-                  {row.done}/{row.total} fertig
+                  {t('doneOfTotal', { done: row.done, total: row.total })}
                 </Text>
               </View>
 
@@ -249,8 +252,8 @@ export default function StatusScreen({ navigation }: Props) {
                   style={[styles.section, filter !== 'all' && filter !== section && styles.sectionDimmed]}
                 >
                   <Text style={styles.sectionTitle}>
-                    {SECTION_META[section].icon} {SECTION_META[section].label}
-                    <Text style={styles.sectionCount}> · {row.open[section].length} offen</Text>
+                    {SECTION_META[section].icon} {sectionLabel(section, lang)}
+                    <Text style={styles.sectionCount}>{t('openCount', { n: row.open[section].length })}</Text>
                   </Text>
                   {groupItems(row.open[section]).map(({ key, item, count }) => (
                     <View key={key} style={styles.itemLine}>

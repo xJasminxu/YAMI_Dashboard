@@ -4,6 +4,7 @@ import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import { formatPrice, itemTotal } from '../../lib/pricing';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
+import { useI18n } from '../../i18n/LanguageContext';
 
 // Eigener Menüpunkt "Umsatz" (vorher ein Kasten oben in der Tischübersicht). Summiert
 // ALLE heutigen Positionen — offene wie bereits abgeschlossene Tische — bis zum
@@ -11,6 +12,7 @@ import { useThemedStyles } from '../../theme/useThemedStyles';
 // Zahlen leert. Rein zur Orientierung: die verbindlichen Zahlen liefert weiterhin die Kasse.
 export default function RevenueScreen() {
   const styles = useThemedStyles(createStyles);
+  const { t } = useI18n();
   const kitchen = useDeviceOrders('kitchen', { includeClosed: true });
   const bar = useDeviceOrders('bar', { includeClosed: true });
 
@@ -85,7 +87,7 @@ export default function RevenueScreen() {
   if (loadError) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Umsatz konnte nicht geladen werden: {loadError}</Text>
+        <Text style={styles.errorText}>{t('revenueLoadError', { error: loadError })}</Text>
       </View>
     );
   }
@@ -93,49 +95,46 @@ export default function RevenueScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.heroCard}>
-        <Text style={styles.heroLabel}>💰 Umsatz heute</Text>
+        <Text style={styles.heroLabel}>{t('revenueToday')}</Text>
         <Text style={styles.heroValue}>{formatPrice(stats.total)}</Text>
         <Text style={styles.heroSub}>
-          {stats.itemCount} Positionen · {stats.openTableCount + stats.closedSessionCount} Tischbesetzungen
+          {t('revenueSub', { items: stats.itemCount, sessions: stats.openTableCount + stats.closedSessionCount })}
         </Text>
       </View>
 
-      <Text style={styles.sectionTitle}>Zahlungsart</Text>
+      <Text style={styles.sectionTitle}>{t('revPayment')}</Text>
       <View style={styles.grid}>
-        <StatTile icon="💳" label="Karte" value={stats.card} styles={styles} />
-        <StatTile icon="💶" label="Bargeld" value={stats.cash} styles={styles} />
-        <StatTile icon="⏳" label="Nicht als bezahlt markiert" value={stats.unpaid} highlight styles={styles} />
+        <StatTile icon="💳" label={t('card')} value={stats.card} styles={styles} />
+        <StatTile icon="💶" label={t('cash')} value={stats.cash} styles={styles} />
+        <StatTile icon="⏳" label={t('revUnpaid')} value={stats.unpaid} highlight styles={styles} />
       </View>
 
-      <Text style={styles.sectionTitle}>Tische</Text>
+      <Text style={styles.sectionTitle}>{t('revTables')}</Text>
       <View style={styles.grid}>
         <StatTile
           icon="🪑"
-          label={`Offen (${stats.openTableCount} ${stats.openTableCount === 1 ? 'Tisch' : 'Tische'})`}
+          label={t('revOpenTables', { n: stats.openTableCount })}
           value={stats.openTables}
           styles={styles}
         />
         <StatTile
           icon="🕓"
-          label={`Abgeschlossen (${stats.closedSessionCount})`}
+          label={t('revClosedTables', { n: stats.closedSessionCount })}
           value={stats.closedTables}
           styles={styles}
         />
       </View>
 
-      <Text style={styles.sectionTitle}>Bereich</Text>
+      <Text style={styles.sectionTitle}>{t('revArea')}</Text>
       <View style={styles.grid}>
-        <StatTile icon="👨‍🍳" label="Küche" value={stats.kitchenSum} styles={styles} />
+        <StatTile icon="👨‍🍳" label={t('revKitchen')} value={stats.kitchenSum} styles={styles} />
         <StatTile icon="🍹" label="Bar" value={stats.barSum} styles={styles} />
       </View>
 
       {stats.hasUnpriced && (
-        <Text style={styles.note}>Enthält Positionen ohne hinterlegten Preis — diese sind nicht mitgezählt.</Text>
+        <Text style={styles.note}>{t('revUnpricedNote')}</Text>
       )}
-      <Text style={styles.disclaimer}>
-        Vorläufige Zahlen zur Orientierung, bis zum nächsten Tagesabschluss. Die verbindlichen Zahlen liefert die
-        Kasse.
-      </Text>
+      <Text style={styles.disclaimer}>{t('revDisclaimer')}</Text>
     </ScrollView>
   );
 }

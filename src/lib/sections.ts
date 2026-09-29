@@ -1,4 +1,5 @@
 import type { DeviceOrderItem } from '../hooks/useDeviceOrders';
+import type { Language } from '../i18n/LanguageContext';
 
 // Gemeinsame Aufteilung für Status-Ansicht und Tisch-Detail (StatusScreen.tsx,
 // TableDetailScreen.tsx): Küche nach Station (categories.kitchen_station, wie in
@@ -14,6 +15,13 @@ export const SECTION_META: Record<Section, { icon: string; label: string; hanzi:
   getraenke: { icon: '🍹', label: 'Getränke', hanzi: '饮料' },
   nachspeisen: { icon: '🍨', label: 'Nachspeisen', hanzi: '甜点' },
 };
+
+// Bereichsname in der gewählten Sprache — Getränke/Nachspeisen gehören zur Bar und
+// bleiben immer Deutsch.
+export function sectionLabel(section: Section, lang: Language): string {
+  if (lang === 'zh' && section !== 'getraenke' && section !== 'nachspeisen') return SECTION_META[section].hanzi;
+  return SECTION_META[section].label;
+}
 
 export function sectionFor(item: DeviceOrderItem): Section {
   const category = item.menu_item.category;

@@ -19,6 +19,20 @@ import { supabase } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation/types';
 import type { ThemeColors } from '../theme/colors';
 import { useThemedStyles } from '../theme/useThemedStyles';
+import { useI18n } from '../i18n/LanguageContext';
+import type { StringKey } from '../i18n/strings';
+
+// Beschriftung je Rolle auf Chinesisch (auf Deutsch: label + hanzi aus DEVICE_ROLES). Die
+// Bar bleibt auch dann "Bar" — alles, was zur Bar gehört, ist immer Deutsch.
+const ROLE_KEYS: Record<DeviceRole, StringKey | null> = {
+  order: 'roleOrder',
+  kitchen: 'roleKitchen',
+  bar: null,
+  status: 'roleStatus',
+  billing: 'roleBilling',
+  revenue: 'roleRevenue',
+  admin: 'roleAdmin',
+};
 
 type Props = NativeStackScreenProps<RootStackParamList, 'RoleSelect'>;
 
@@ -50,6 +64,7 @@ function navigateToRole(navigation: Props['navigation'], role: DeviceRole) {
 
 export default function RoleSelectScreen({ navigation }: Props) {
   const styles = useThemedStyles(createStyles);
+  const { lang, t } = useI18n();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pinText, setPinText] = useState('');
   const [closing, setClosing] = useState(false);
@@ -69,7 +84,7 @@ export default function RoleSelectScreen({ navigation }: Props) {
 
   async function handleTagesabschluss() {
     if (pinText !== ADMIN_PIN) {
-      setCloseError('Falsche PIN.');
+      setCloseError(t('wrongPin'));
       return;
     }
 
@@ -105,8 +120,8 @@ export default function RoleSelectScreen({ navigation }: Props) {
       <View style={styles.logoBackdrop}>
         <Image source={require('../../assets/yami-logo.png')} style={styles.logo} resizeMode="contain" />
       </View>
-      <Text style={styles.greeting}>Willkommen! 👋 欢迎</Text>
-      <Text style={styles.subGreeting}>Wofür wird dieses Gerät genutzt? · 请选择设备用途</Text>
+      <Text style={styles.greeting}>{t('welcome')}</Text>
+      <Text style={styles.subGreeting}>{t('whichRole')}</Text>
 
       <View style={styles.roleList}>
         {DEVICE_ROLES.map(({ role, emoji, label, hanzi }) => (
@@ -120,8 +135,12 @@ export default function RoleSelectScreen({ navigation }: Props) {
               <Text style={styles.emoji}>{emoji}</Text>
             </View>
             <View style={styles.buttonTextWrap}>
-              <Text style={[styles.buttonText, role === 'order' && styles.buttonTextPrimary]}>{label}</Text>
-              <Text style={[styles.buttonHanzi, role === 'order' && styles.buttonHanziPrimary]}>{hanzi}</Text>
+              <Text style={[styles.buttonText, role === 'order' && styles.buttonTextPrimary]}>
+                {lang === 'zh' && ROLE_KEYS[role] ? t(ROLE_KEYS[role]!) : label}
+              </Text>
+              {lang === 'de' && (
+                <Text style={[styles.buttonHanzi, role === 'order' && styles.buttonHanziPrimary]}>{hanzi}</Text>
+              )}
             </View>
             <Text style={[styles.chevron, role === 'order' && styles.buttonTextPrimary]}>›</Text>
           </TouchableOpacity>
@@ -129,18 +148,15 @@ export default function RoleSelectScreen({ navigation }: Props) {
       </View>
 
       <TouchableOpacity style={styles.dayCloseButton} onPress={openTagesabschlussDialog}>
-        <Text style={styles.dayCloseButtonText}>🌙 Tagesabschluss</Text>
+        <Text style={styles.dayCloseButtonText}>{t('dayClose')}</Text>
       </TouchableOpacity>
 
       <Modal visible={confirmOpen} transparent animationType="fade" onRequestClose={cancelTagesabschluss}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
             <Text style={styles.modalEmoji}>🧹</Text>
-            <Text style={styles.modalTitle}>Tagesabschluss durchführen?</Text>
-            <Text style={styles.modalBody}>
-              Löscht alle offenen und fertigen Bestellungen unwiderruflich und setzt alle Tisch-Notizen zurück,
-              damit morgen wieder bei null angefangen wird. Speisekarte und Tische bleiben erhalten. 将所有未完成和已完成的订单永久删除并清空所有餐桌备注，以便明天从零开始。菜单和餐桌信息将保留。
-            </Text>
+            <Text style={styles.modalTitle}>{t('dayCloseTitle')}</Text>
+            <Text style={styles.modalBody}>{t('dayCloseBody')}</Text>
             <TextInput
               style={styles.pinInput}
               value={pinText}
@@ -161,11 +177,11 @@ export default function RoleSelectScreen({ navigation }: Props) {
               {closing ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.confirmButtonText}>🗑️ Ja, alle Bestellungen löschen</Text>
+                <Text style={styles.confirmButtonText}>{t('dayCloseConfirm')}</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelTagesabschluss} disabled={closing}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>

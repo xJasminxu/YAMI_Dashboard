@@ -14,6 +14,7 @@ import { applyTableDiscount } from '../lib/discount';
 import { formatPrice } from '../lib/pricing';
 import type { ThemeColors } from '../theme/colors';
 import { useThemedStyles } from '../theme/useThemedStyles';
+import { useI18n } from '../i18n/LanguageContext';
 
 const PERCENT_PRESETS = [10, 15, 20, 50];
 
@@ -34,6 +35,7 @@ export default function DiscountDialog({
   onClose: () => void;
 }) {
   const styles = useThemedStyles(createStyles);
+  const { t } = useI18n();
   const [description, setDescription] = useState('');
   const [amountText, setAmountText] = useState('');
   const [activePercent, setActivePercent] = useState<number | null>(null);
@@ -62,6 +64,7 @@ export default function DiscountDialog({
     const value = Math.round(tableTotal * percent) / 100;
     setAmountText(value.toFixed(2).replace('.', ','));
     setActivePercent(percent);
+    // Beschreibung bleibt Deutsch (landet in Abrechnung/Protokoll), nur die Oberfläche übersetzt.
     if (!description.trim() || /^\d+ % Rabatt$/.test(description.trim())) setDescription(`${percent} % Rabatt`);
   }
 
@@ -83,10 +86,10 @@ export default function DiscountDialog({
       <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.card}>
           <Text style={styles.emoji}>🏷️</Text>
-          <Text style={styles.title}>Rabatt für Tisch {tableNumber}</Text>
+          <Text style={styles.title}>{t('discountTitle', { n: tableNumber })}</Text>
           {!!tableTotal && tableTotal > 0 && (
             <>
-              <Text style={styles.subtitle}>Tischsumme {formatPrice(tableTotal)}</Text>
+              <Text style={styles.subtitle}>{t('discountTableSum', { sum: formatPrice(tableTotal) })}</Text>
               <View style={styles.presetRow}>
                 {PERCENT_PRESETS.map((percent) => (
                   <TouchableOpacity
@@ -102,7 +105,7 @@ export default function DiscountDialog({
               </View>
             </>
           )}
-          <Text style={styles.label}>Betrag (€)</Text>
+          <Text style={styles.label}>{t('discountAmount')}</Text>
           <TextInput
             style={[styles.input, styles.amountInput]}
             value={amountText}
@@ -115,12 +118,12 @@ export default function DiscountDialog({
             keyboardType="decimal-pad"
             autoFocus
           />
-          <Text style={styles.label}>Beschreibung (optional)</Text>
+          <Text style={styles.label}>{t('discountDescription')}</Text>
           <TextInput
             style={styles.input}
             value={description}
             onChangeText={setDescription}
-            placeholder="z.B. Stammgast, Geburtstag"
+            placeholder={t('discountDescriptionPlaceholder')}
             placeholderTextColor={styles.placeholder.color as string}
           />
           {error && <Text style={styles.error}>{error}</Text>}
@@ -133,12 +136,12 @@ export default function DiscountDialog({
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.primaryText}>
-                {valid ? `🏷️ − ${formatPrice(amount)} abziehen` : 'Betrag eingeben'}
+                {valid ? t('discountApply', { amount: formatPrice(amount) }) : t('discountEnterAmount')}
               </Text>
             )}
           </TouchableOpacity>
           <TouchableOpacity style={styles.cancel} onPress={onClose} disabled={saving}>
-            <Text style={styles.cancelText}>Abbrechen</Text>
+            <Text style={styles.cancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>

@@ -4,7 +4,8 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import type { RootStackParamList } from '../../navigation/types';
-import { groupItems, SECTION_META, SECTIONS, sectionFor, type Section } from '../../lib/sections';
+import { groupItems, SECTION_META, SECTIONS, sectionFor, sectionLabel, type Section } from '../../lib/sections';
+import { useI18n } from '../../i18n/LanguageContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
 
@@ -16,6 +17,7 @@ type TableDetailStyles = ReturnType<typeof createStyles>;
 // Realtime-Subscriptions wie die Küchen-/Bar-Ansichten.
 export default function TableDetailScreen({ route }: Props) {
   const styles = useThemedStyles(createStyles);
+  const { lang, t } = useI18n();
   const { tableNumber } = route.params;
   const kitchen = useDeviceOrders('kitchen');
   const bar = useDeviceOrders('bar');
@@ -48,7 +50,7 @@ export default function TableDetailScreen({ route }: Props) {
   if (loadError) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Bestellung konnte nicht geladen werden: {loadError}</Text>
+        <Text style={styles.errorText}>{t('orderLoadError', { error: loadError })}</Text>
       </View>
     );
   }
@@ -59,19 +61,19 @@ export default function TableDetailScreen({ route }: Props) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>🪑 Tisch {tableNumber}</Text>
+      <Text style={styles.title}>🪑 {t('table', { n: tableNumber })}</Text>
       {totalItems > 0 && (
         <Text style={styles.subtitle}>
-          {doneItems}/{totalItems} fertig
+          {t('doneOfTotal', { done: doneItems, total: totalItems })}
         </Text>
       )}
 
-      {totalItems === 0 && <Text style={styles.emptyText}>Keine offenen Positionen für diesen Tisch.</Text>}
+      {totalItems === 0 && <Text style={styles.emptyText}>{t('noOpenItemsForTable')}</Text>}
 
       {SECTIONS.filter((section) => bySection[section].length > 0).map((section) => (
         <ItemSection
           key={section}
-          title={`${SECTION_META[section].icon} ${SECTION_META[section].label}`}
+          title={`${SECTION_META[section].icon} ${sectionLabel(section, lang)}`}
           items={bySection[section]}
           styles={styles}
         />
@@ -96,13 +98,14 @@ function ItemSection({
   items: DeviceOrderItem[];
   styles: TableDetailStyles;
 }) {
+  const { t } = useI18n();
   const open = items.filter((item) => item.status === 'offen');
   const done = items.filter((item) => item.status === 'fertig');
 
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>
-        {title} — {done.length}/{items.length} fertig
+        {title} — {t('doneOfTotal', { done: done.length, total: items.length })}
       </Text>
       {/* Offene zuerst, dann fertige — gleiche Portionen zusammengefasst ("2× …"). */}
       {groupItems([...open, ...done]).map(({ key, item, count }) => (
@@ -113,6 +116,7 @@ function ItemSection({
 }
 
 function ItemRow({ item, count, styles }: { item: DeviceOrderItem; count: number; styles: TableDetailStyles }) {
+  const { t } = useI18n();
   const isDone = item.status === 'fertig';
   return (
     <View style={styles.itemRow}>
@@ -135,7 +139,7 @@ function ItemRow({ item, count, styles }: { item: DeviceOrderItem; count: number
       )}
       {item.note && <Text style={[styles.itemNote, isDone && styles.itemDone]}>💬 {item.note}</Text>}
       <Text style={[styles.itemStatus, isDone ? styles.itemStatusDone : styles.itemStatusOpen]}>
-        {isDone ? '✅ fertig' : '⏳ offen'}
+        {isDone ? t('statusDone') : t('statusOpen')}
       </Text>
     </View>
   );

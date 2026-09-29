@@ -9,6 +9,12 @@ import type { OrderItemStatus, TargetDevice } from '../types/database';
 import type { ThemeColors } from '../theme/colors';
 import { useTheme } from '../theme/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
+import { translate, useI18n } from '../i18n/LanguageContext';
+import type { StringKey } from '../i18n/strings';
+
+// Übersetzer für die Board-Oberfläche: Bar immer Deutsch, Küche nach gewählter Sprache
+// (Gerichtenamen auf den Tickets bleiben unabhängig davon zweisprachig).
+type BoardT = (key: StringKey, params?: Record<string, string | number>) => string;
 
 type Tab = 'offen' | 'fertig' | 'anzahl';
 type BoardStyles = ReturnType<typeof createStyles>;
@@ -198,6 +204,13 @@ export default function DeviceTicketBoard({
 }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const { lang } = useI18n();
+  const uiLang = targetDevice === 'bar' ? 'de' : lang;
+  const bt: BoardT = (key, params) => translate(uiLang, key, params);
+  // Küche auf Deutsch behält die zweisprachige Beschriftung (Küchenpersonal spricht
+  // Chinesisch), auf Chinesisch rein chinesisch; Bar rein deutsch.
+  const completeAllLabel =
+    targetDevice === 'bar' ? '✓ Alle fertig' : lang === 'zh' ? '✓ 全部完成' : '✓ 全部完成 · Alle fertig';
   const cardBackground = useMemo(() => cardBackgroundFor(colors), [colors]);
   const { orders: rawOrders, loading, error, setItemsStatus } = useDeviceOrders(targetDevice);
   // Rabatt-Positionen sind Preis-Abzüge, kein zuzubereitendes Gericht/Getränk (siehe
@@ -415,25 +428,26 @@ export default function DeviceTicketBoard({
 
     return {
       primary: build(
-        'Vorspeise',
+        bt('stationVorspeise'),
         (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise',
-        'Keine offenen Vorspeisen.',
-        'Noch keine fertigen Vorspeisen-Tickets.'
+        bt('emptyOpenVorspeise'),
+        bt('emptyDoneVorspeise')
       ),
       secondary: build(
-        'Hauptspeise',
+        bt('stationHauptspeise'),
         (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'hauptspeise',
-        'Keine offenen Hauptspeisen.',
-        'Noch keine fertigen Hauptspeisen-Tickets.'
+        bt('emptyOpenHauptspeise'),
+        bt('emptyDoneHauptspeise')
       ),
       tertiary: build(
-        'Barbecue',
+        bt('stationBarbecue'),
         (item) => item.menu_item.category.kitchen_station === 'barbecue',
-        'Keine offenen Barbecue-Bestellungen.',
-        'Noch keine fertigen Barbecue-Tickets.'
+        bt('emptyOpenBarbecue'),
+        bt('emptyDoneBarbecue')
       ),
     };
-  }, [orders, targetDevice]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- bt hängt nur an uiLang
+  }, [orders, targetDevice, uiLang]);
 
   // Stückzahl-Zusammenfassung für den "Anzahl"-Tab (siehe aggregateOpen) — dieselbe
   // Stationen-Aufteilung wie kitchenStations oben, aber aus allen noch offenen Positionen
@@ -467,7 +481,7 @@ export default function DeviceTicketBoard({
   if (error) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Bestellungen konnten nicht geladen werden: {error}</Text>
+        <Text style={styles.errorText}>{bt('ordersLoadError', { error })}</Text>
       </View>
     );
   }
@@ -513,7 +527,7 @@ export default function DeviceTicketBoard({
               style={[styles.tab, largeMode && styles.tabLarge, tab === 'offen' && styles.tabActive]}
               onPress={() => setTab('offen')}
             >
-              <KitchenTabLabel hanzi="待做" de="Offen" count={open.length} active={tab === 'offen'} large={largeMode} styles={styles} />
+              <KitchenTabLabel hanzi="待做" de={lang === 'de' ? 'Offen' : null} count={open.length} active={tab === 'offen'} large={largeMode} styles={styles} />
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tab, largeMode && styles.tabLarge, tab === 'fertig' && styles.tabActive]}
@@ -521,7 +535,7 @@ export default function DeviceTicketBoard({
             >
               <KitchenTabLabel
                 hanzi="已完成"
-                de="Vergangene Bestellungen"
+                de={lang === 'de' ? 'Vergangene Bestellungen' : null}
                 count={kitchenDoneCardCount}
                 active={tab === 'fertig'}
                 large={largeMode}
@@ -537,7 +551,7 @@ export default function DeviceTicketBoard({
             >
               <KitchenTabLabel
                 hanzi="数量"
-                de="Anzahl"
+                de={lang === 'de' ? 'Anzahl' : null}
                 count={countOpenItems(open)}
                 active={tab === 'anzahl'}
                 large={largeMode}
@@ -596,6 +610,8 @@ export default function DeviceTicketBoard({
               <DishCountList entries={barDishCounts!.primary} large={largeMode} styles={styles} emptyText={barColumns!.primaryEmptyText} />
             ) : (
               <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
                 orders={barColumns!.primaryOrders}
                 large={largeMode}
                 styles={styles}
@@ -624,6 +640,8 @@ export default function DeviceTicketBoard({
               <DishCountList entries={barDishCounts!.secondary} large={largeMode} styles={styles} emptyText={barColumns!.secondaryEmptyText} />
             ) : (
               <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
                 orders={barColumns!.secondaryOrders}
                 large={largeMode}
                 styles={styles}
@@ -640,6 +658,8 @@ export default function DeviceTicketBoard({
           <View style={{ flex: stationRatios[2] }}>
             <StationHeader title="Vergangene Bestellungen" count={done.length} suffix="erledigt" large={largeMode} styles={styles} />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={done}
               large={largeMode}
               styles={styles}
@@ -663,18 +683,18 @@ export default function DeviceTicketBoard({
           onLayout={(e) => handleStationRowLayout(e.nativeEvent.layout.width)}
         >
           <View style={{ flex: stationRatios[0] }}>
-            <StationHeader title={kitchenStations!.primary.title} count={sumCounts(kitchenDishCounts!.primary)} large={largeMode} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.primary} large={largeMode} styles={styles} emptyText="Keine offenen Vorspeisen." />
+            <StationHeader title={kitchenStations!.primary.title} count={sumCounts(kitchenDishCounts!.primary)} suffix={bt('suffixOpen')} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.primary} large={largeMode} styles={styles} emptyText={bt('emptyOpenVorspeise')} />
           </View>
           <StationDividerHandle responder={dividerResponders[0]} styles={styles} />
           <View style={{ flex: stationRatios[1] }}>
-            <StationHeader title={kitchenStations!.secondary.title} count={sumCounts(kitchenDishCounts!.secondary)} large={largeMode} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.secondary} large={largeMode} styles={styles} emptyText="Keine offenen Hauptspeisen." />
+            <StationHeader title={kitchenStations!.secondary.title} count={sumCounts(kitchenDishCounts!.secondary)} suffix={bt('suffixOpen')} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.secondary} large={largeMode} styles={styles} emptyText={bt('emptyOpenHauptspeise')} />
           </View>
           <StationDividerHandle responder={dividerResponders[1]} styles={styles} />
           <View style={{ flex: stationRatios[2] }}>
-            <StationHeader title={kitchenStations!.tertiary.title} count={sumCounts(kitchenDishCounts!.tertiary)} large={largeMode} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.tertiary} large={largeMode} styles={styles} emptyText="Keine offenen Barbecue-Bestellungen." />
+            <StationHeader title={kitchenStations!.tertiary.title} count={sumCounts(kitchenDishCounts!.tertiary)} suffix={bt('suffixOpen')} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.tertiary} large={largeMode} styles={styles} emptyText={bt('emptyOpenBarbecue')} />
           </View>
         </View>
       ) : (
@@ -690,11 +710,13 @@ export default function DeviceTicketBoard({
             <StationHeader
               title={kitchenStations!.primary.title}
               count={tab === 'offen' ? countOpenItems(kitchenStations!.primary.openOrders) : kitchenStations!.primary.doneOrders.length}
-              suffix={tab === 'offen' ? 'offen' : 'fertig'}
+              suffix={tab === 'offen' ? bt('suffixOpen') : bt('suffixDone')}
               large={largeMode}
               styles={styles}
             />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={tab === 'offen' ? kitchenStations!.primary.openOrders : kitchenStations!.primary.doneOrders}
               large={largeMode}
               styles={styles}
@@ -716,11 +738,13 @@ export default function DeviceTicketBoard({
             <StationHeader
               title={kitchenStations!.secondary.title}
               count={tab === 'offen' ? countOpenItems(kitchenStations!.secondary.openOrders) : kitchenStations!.secondary.doneOrders.length}
-              suffix={tab === 'offen' ? 'offen' : 'fertig'}
+              suffix={tab === 'offen' ? bt('suffixOpen') : bt('suffixDone')}
               large={largeMode}
               styles={styles}
             />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={tab === 'offen' ? kitchenStations!.secondary.openOrders : kitchenStations!.secondary.doneOrders}
               large={largeMode}
               styles={styles}
@@ -738,11 +762,13 @@ export default function DeviceTicketBoard({
             <StationHeader
               title={kitchenStations!.tertiary.title}
               count={tab === 'offen' ? countOpenItems(kitchenStations!.tertiary.openOrders) : kitchenStations!.tertiary.doneOrders.length}
-              suffix={tab === 'offen' ? 'offen' : 'fertig'}
+              suffix={tab === 'offen' ? bt('suffixOpen') : bt('suffixDone')}
               large={largeMode}
               styles={styles}
             />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={tab === 'offen' ? kitchenStations!.tertiary.openOrders : kitchenStations!.tertiary.doneOrders}
               large={largeMode}
               styles={styles}
@@ -782,7 +808,8 @@ function KitchenTabLabel({
   styles,
 }: {
   hanzi: string;
-  de: string;
+  // null = auf Chinesisch geschaltet, dann nur die Hanzi-Zeile.
+  de: string | null;
   count: number;
   active: boolean;
   large: boolean;
@@ -793,7 +820,7 @@ function KitchenTabLabel({
       <Text style={[styles.tabTextHanzi, large && styles.tabTextHanziLarge, active && styles.tabTextActive]}>
         {hanzi} ({count})
       </Text>
-      <Text style={[styles.tabTextDe, large && styles.tabTextDeLarge, active && styles.tabTextActive]}>{de}</Text>
+      {de && <Text style={[styles.tabTextDe, large && styles.tabTextDeLarge, active && styles.tabTextActive]}>{de}</Text>}
     </>
   );
 }
@@ -913,6 +940,8 @@ function DishCountList({
 // auch für jede Spalte der "Offen"-Mehr-Spalten-Ansicht verwendet, damit Kartenlayout/
 // -verhalten überall identisch bleiben.
 function TicketList({
+  t,
+  completeAllLabel,
   orders,
   large,
   styles,
@@ -924,6 +953,8 @@ function TicketList({
   columns = 1,
   showFinishedAt = false,
 }: {
+  t: BoardT;
+  completeAllLabel: string;
   orders: GroupedOrder[];
   large: boolean;
   styles: BoardStyles;
@@ -959,11 +990,11 @@ function TicketList({
         const card = (
           <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
             <View style={styles.cardHeader}>
-              <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>Tisch {order.table.number}</Text>
+              <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>{t('table', { n: order.table.number })}</Text>
               <View style={styles.cardHeaderRight}>
                 <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>
                   {showFinishedAt && finishedAtMs > 0
-                    ? `Fertig ${formatTime(new Date(finishedAtMs).toISOString())}`
+                    ? t('finishedAt', { time: formatTime(new Date(finishedAtMs).toISOString()) })
                     : formatTime(order.createdAt)}
                 </Text>
                 {order.items.length > 1 && (
@@ -1061,7 +1092,7 @@ function TicketList({
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isDone }}
-              accessibilityLabel={isDone ? 'Als offen markieren' : 'Als fertig markieren'}
+              accessibilityLabel={isDone ? t('markOpen') : t('markDone')}
             >
               <Text style={[styles.checkButtonText, large && styles.checkButtonTextLarge, isDone && styles.checkButtonTextDone]}>
                 ✓
@@ -1078,10 +1109,10 @@ function TicketList({
               <TouchableOpacity
                 onPress={() => onCompleteOrder?.(order)}
                 style={[styles.completeAllButton, large && styles.completeAllButtonLarge]}
-                accessibilityLabel="Alle Positionen abhaken"
+                accessibilityLabel={t('markAllDone')}
               >
                 <Text style={[styles.completeAllButtonText, large && styles.completeAllButtonTextLarge]}>
-                  ✓ 全部完成 · Alle fertig
+                  {completeAllLabel}
                 </Text>
               </TouchableOpacity>
             )}
@@ -1107,7 +1138,7 @@ function TicketList({
             renderRightActions={() => (
               <View style={[styles.swipeCompleteAction, large && styles.swipeCompleteActionLarge]}>
                 <Text style={[styles.swipeCompleteActionText, large && styles.swipeCompleteActionTextLarge]}>
-                  ✓ Fertig
+                  {t('swipeDone')}
                 </Text>
               </View>
             )}

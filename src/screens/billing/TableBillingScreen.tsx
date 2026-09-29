@@ -19,6 +19,7 @@ import { formatDateTime } from '../../lib/datetime';
 import { itemTotal, formatPrice } from '../../lib/pricing';
 import { logActivity } from '../../lib/activityLog';
 import DiscountDialog from '../../components/DiscountDialog';
+import { useI18n } from '../../i18n/LanguageContext';
 import { supabase } from '../../lib/supabase';
 import type { RootStackParamList } from '../../navigation/types';
 import type { PaymentMethod } from '../../types/database';
@@ -33,6 +34,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'TableBilling'>;
 // das bestehende Kassensystem, hier wird nichts gebucht oder gespeichert.
 export default function TableBillingScreen({ route, navigation }: Props) {
   const styles = useThemedStyles(createStyles);
+  const { t } = useI18n();
   const { tableNumber, closed: showClosed = false, closedAt } = route.params;
   // includeClosed:true, damit derselbe Hook sowohl den aktuellen Tisch (closedAt===null)
   // als auch einen aus "Vergangene Tische" aufgerufenen, bereits geschlossenen Tisch
@@ -275,7 +277,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   if (loadError) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Bestellung konnte nicht geladen werden: {loadError}</Text>
+        <Text style={styles.errorText}>{t('orderLoadError', { error: loadError })}</Text>
       </View>
     );
   }
@@ -299,10 +301,10 @@ export default function TableBillingScreen({ route, navigation }: Props) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>
-          Tisch {tableNumber}
-          {showClosed && closedAt ? ` (abgeschlossen ${formatDateTime(closedAt)})` : ''}
+          {t('table', { n: tableNumber })}
+          {showClosed && closedAt ? t('closedSuffix', { time: formatDateTime(closedAt) }) : ''}
         </Text>
-        <Text style={styles.grandTotal}>Gesamt: {formatPrice(grandTotal)}</Text>
+        <Text style={styles.grandTotal}>{t('grandTotal', { sum: formatPrice(grandTotal) })}</Text>
       </View>
       <TouchableOpacity style={styles.noteRow} onPress={openNoteEditor} disabled={!tableId}>
         {tableNote ? (
@@ -310,26 +312,26 @@ export default function TableBillingScreen({ route, navigation }: Props) {
             📝 {tableNote}
           </Text>
         ) : (
-          <Text style={styles.noteAddText}>+ Notiz</Text>
+          <Text style={styles.noteAddText}>{t('addNote')}</Text>
         )}
       </TouchableOpacity>
       {paidItems.length > 0 && (
         <View style={styles.paidSummaryRow}>
           <View>
-            <Text style={styles.paidSummaryText}>Bezahlt: {formatPrice(paidTotal)}</Text>
+            <Text style={styles.paidSummaryText}>{t('paidSum', { sum: formatPrice(paidTotal) })}</Text>
             <Text style={styles.paidSummarySplit}>
-              Karte {formatPrice(cardTotal)} · Bargeld {formatPrice(cashTotal)}
+              {t('paidSplit', { card: formatPrice(cardTotal), cash: formatPrice(cashTotal) })}
             </Text>
           </View>
-          <Text style={styles.openSummaryText}>Noch offen: {formatPrice(openTotal)}</Text>
+          <Text style={styles.openSummaryText}>{t('stillOpenSum', { sum: formatPrice(openTotal) })}</Text>
         </View>
       )}
       <View style={styles.selectRow}>
         <TouchableOpacity onPress={selectAll}>
-          <Text style={styles.selectAction}>Alle auswählen</Text>
+          <Text style={styles.selectAction}>{t('selectAll')}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={selectNone}>
-          <Text style={styles.selectAction}>Auswahl aufheben</Text>
+          <Text style={styles.selectAction}>{t('selectNone')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -339,7 +341,9 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         disabled={selectedIds.size === 0}
       >
         <Text style={styles.paidButtonText}>
-          💳 Bezahlt{selectedIds.size > 0 ? ` (${selectedIds.size} · ${formatPrice(selectedTotal)})` : ''}
+          {selectedIds.size > 0
+            ? t('paidWithSelection', { n: selectedIds.size, sum: formatPrice(selectedTotal) })
+            : t('paid')}
         </Text>
       </TouchableOpacity>
 
@@ -382,7 +386,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
                     {item.extras.map((e) => `+${e.quantity} ${e.name_hanzi} (${e.name_de})`).join(', ')}
                   </Text>
                 )}
-                {item.note && <Text style={[styles.itemNote, paid && styles.itemDone]}>Notiz: {item.note}</Text>}
+                {item.note && <Text style={[styles.itemNote, paid && styles.itemDone]}>{t('note', { note: item.note })}</Text>}
                 <Text style={[styles.itemTimestamp, paid && styles.itemDone]}>{formatDateTime(item.created_at)}</Text>
               </View>
               <Text style={[styles.itemPrice, paid && styles.itemDone]}>{total !== null ? formatPrice(total) : '–'}</Text>
@@ -405,7 +409,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
             <Swipeable
               renderRightActions={() => (
                 <TouchableOpacity style={styles.swipeRemoveAction} onPress={() => requestRemoveItem(item)}>
-                  <Text style={styles.swipeRemoveActionText}>🗑 Entfernen</Text>
+                  <Text style={styles.swipeRemoveActionText}>{t('remove')}</Text>
                 </TouchableOpacity>
               )}
               onSwipeableOpen={(direction) => {
@@ -418,21 +422,18 @@ export default function TableBillingScreen({ route, navigation }: Props) {
             </Swipeable>
           );
         }}
-        ListEmptyComponent={<Text style={styles.emptyText}>Keine Positionen für diesen Tisch.</Text>}
+        ListEmptyComponent={<Text style={styles.emptyText}>{t('noItemsForTable')}</Text>}
       />
 
       <View style={styles.footer}>
-        {hasUnpriced && <Text style={styles.footerNote}>Enthält Positionen ohne hinterlegten Preis.</Text>}
+        {hasUnpriced && <Text style={styles.footerNote}>{t('unpricedNote')}</Text>}
         <View style={styles.footerRow}>
           <Text style={styles.footerLabel}>
-            Noch offen ({items.length - paidItems.length}/{items.length})
+            {t('stillOpenCount', { open: items.length - paidItems.length, total: items.length })}
           </Text>
           <Text style={styles.footerValue}>{formatPrice(openTotal)}</Text>
         </View>
-        <Text style={styles.footerDisclaimer}>
-          Vorläufige Berechnung zur Orientierung, z.B. für getrennte Rechnungen — gebucht wird nichts. Die
-          verbindliche Rechnung druckt weiterhin die Kasse.
-        </Text>
+        <Text style={styles.footerDisclaimer}>{t('billingDisclaimer')}</Text>
 
         {!showClosed && (
           <TouchableOpacity
@@ -440,7 +441,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
             onPress={() => setDiscountOpen(true)}
             disabled={items.length === 0}
           >
-            <Text style={styles.discountButtonText}>🏷️ Rabatt hinzufügen</Text>
+            <Text style={styles.discountButtonText}>{t('addDiscount')}</Text>
           </TouchableOpacity>
         )}
 
@@ -450,7 +451,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
             onPress={() => setCloseConfirmOpen(true)}
             disabled={items.length === 0}
           >
-            <Text style={styles.closeTableButtonText}>Tisch abschließen</Text>
+            <Text style={styles.closeTableButtonText}>{t('closeTable')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -458,9 +459,9 @@ export default function TableBillingScreen({ route, navigation }: Props) {
       <Modal visible={paymentPromptOpen} transparent animationType="fade" onRequestClose={() => setPaymentPromptOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Zahlungsart</Text>
+            <Text style={styles.modalTitle}>{t('paymentMethod')}</Text>
             <Text style={styles.modalBody}>
-              {selectedIds.size} Position(en) · {formatPrice(selectedTotal)}
+              {t('paymentSummary', { n: selectedIds.size, sum: formatPrice(selectedTotal) })}
             </Text>
             {paymentError && <Text style={styles.errorText}>{paymentError}</Text>}
             <TouchableOpacity
@@ -471,7 +472,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               {savingPayment ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.paymentMethodButtonText}>Karte</Text>
+                <Text style={styles.paymentMethodButtonText}>{t('card')}</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity
@@ -482,7 +483,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               {savingPayment ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.paymentMethodButtonText}>Bargeld</Text>
+                <Text style={styles.paymentMethodButtonText}>{t('cash')}</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity
@@ -490,7 +491,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               onPress={() => setPaymentPromptOpen(false)}
               disabled={savingPayment}
             >
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -510,13 +511,11 @@ export default function TableBillingScreen({ route, navigation }: Props) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Tisch {tableNumber} abschließen?</Text>
+            <Text style={styles.modalTitle}>{t('closeTableTitle', { n: tableNumber })}</Text>
             <Text style={styles.modalBody}>
-              Nimmt diesen Tisch aus Küche, Bar, Status und der aktuellen Tischübersicht raus und macht ihn wieder
-              frei für neue Gäste. Die Bestellung wird dabei nicht gelöscht, sondern bleibt unter "Vergangene
-              Tische" nachschlagbar, bis der Tagesabschluss gemacht wird.
+              {t('closeTableBody')}
               {openTotal > 0
-                ? ` Achtung: noch ${items.length - paidItems.length} Position(en) im Wert von ${formatPrice(openTotal)} sind nicht als bezahlt markiert.`
+                ? t('closeTableUnpaid', { n: items.length - paidItems.length, sum: formatPrice(openTotal) })
                 : ''}
             </Text>
             {closeError && <Text style={styles.errorText}>{closeError}</Text>}
@@ -528,7 +527,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               {closing ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.confirmButtonText}>Ja, Tisch abschließen</Text>
+                <Text style={styles.confirmButtonText}>{t('closeTableConfirm')}</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity
@@ -536,7 +535,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               onPress={() => setCloseConfirmOpen(false)}
               disabled={closing}
             >
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -545,12 +544,13 @@ export default function TableBillingScreen({ route, navigation }: Props) {
       <Modal visible={removeItem !== null} transparent animationType="fade" onRequestClose={cancelRemoveItem}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Position entfernen?</Text>
+            <Text style={styles.modalTitle}>{t('removeItemTitle')}</Text>
             <Text style={styles.modalBody}>
-              {removeItem?.menu_item.name_hanzi} ({removeItem?.menu_item.name_de}
-              {removeItem?.variant_de ? ` · ${removeItem.variant_de}` : ''}) wird unwiderruflich aus der Bestellung
-              gelöscht — auch aus Küche/Bar, falls dort noch offen. Für falsch bestellte Positionen oder Einladungen
-              aufs Haus.
+              {t('removeItemBody', {
+                name: removeItem
+                  ? `${removeItem.menu_item.name_hanzi ? `${removeItem.menu_item.name_hanzi} (${removeItem.menu_item.name_de})` : removeItem.menu_item.name_de}${removeItem.variant_de ? ` · ${removeItem.variant_de}` : ''}`
+                  : '',
+              })}
             </Text>
             {removeError && <Text style={styles.errorText}>{removeError}</Text>}
             <TouchableOpacity
@@ -558,10 +558,10 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               onPress={confirmRemoveItem}
               disabled={removing}
             >
-              {removing ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmButtonText}>Ja, entfernen</Text>}
+              {removing ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmButtonText}>{t('confirmRemove')}</Text>}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelRemoveItem} disabled={removing}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -573,12 +573,12 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Notiz zu Tisch {tableNumber}</Text>
+            <Text style={styles.modalTitle}>{t('tableNoteTitle', { n: tableNumber })}</Text>
             <TextInput
               style={styles.noteInput}
               value={noteText}
               onChangeText={setNoteText}
-              placeholder="z.B. wartet auf Rechnung, Allergie Erdnuss ..."
+              placeholder={t('tableNotePlaceholder')}
               placeholderTextColor={styles.noteInputPlaceholder.color as string}
               multiline
               autoFocus
@@ -589,10 +589,10 @@ export default function TableBillingScreen({ route, navigation }: Props) {
               onPress={saveNote}
               disabled={savingNote}
             >
-              {savingNote ? <ActivityIndicator color="#fff" /> : <Text style={styles.paymentMethodButtonText}>Speichern</Text>}
+              {savingNote ? <ActivityIndicator color="#fff" /> : <Text style={styles.paymentMethodButtonText}>{t('save')}</Text>}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelNoteEdit} disabled={savingNote}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>

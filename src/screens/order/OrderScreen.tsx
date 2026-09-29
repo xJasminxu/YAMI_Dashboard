@@ -23,6 +23,7 @@ import type { RootStackParamList } from '../../navigation/types';
 import type { MenuGroup, MenuItem, VariantOption } from '../../types/database';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
+import { translate, useI18n, type Language } from '../../i18n/LanguageContext';
 import { categoryEmoji, MENU_GROUP_EMOJIS, titleCase } from '../../lib/emoji';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Order'>;
@@ -38,11 +39,11 @@ type OrderStyles = ReturnType<typeof createStyles>;
 // CartBar) statt eines unsichtbaren Overlays, das sich unabhängig vom Text bewegt hat.
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 
-const MENU_GROUP_LABELS: Record<MenuGroup, string> = {
-  essen: 'Essen',
-  getraenke: 'Getränke',
-  nachspeisen: 'Nachspeisen',
-};
+// Getränke/Nachspeisen gehören zur Bar und bleiben deshalb auch auf Chinesisch Deutsch.
+function menuGroupLabel(group: MenuGroup, lang: Language): string {
+  if (group === 'essen') return translate(lang, 'groupFood');
+  return group === 'getraenke' ? 'Getränke' : 'Nachspeisen';
+}
 
 interface CartExtra {
   nameHanzi: string;
@@ -110,14 +111,15 @@ const CART_ITEMS_EXPANDED_HEIGHT = 320;
 // Preis-Anzeige für die Item-Liste: fixer Preis, "ab X€" wenn der Preis erst per
 // Variante feststeht (z.B. Fried Chicken 4/8 Stück), oder nichts, falls noch kein
 // Preis hinterlegt ist.
-function itemPriceLabel(item: MenuItem): string | null {
+function itemPriceLabel(item: MenuItem, lang: Language): string | null {
   if (item.price !== null) return formatPrice(item.price);
   const variantPrices = (item.variant_options ?? []).map((v) => v.price).filter((p): p is number => p !== undefined);
-  if (variantPrices.length > 0) return `ab ${formatPrice(Math.min(...variantPrices))}`;
+  if (variantPrices.length > 0) return translate(lang, 'fromPrice', { price: formatPrice(Math.min(...variantPrices)) });
   return null;
 }
 
 export default function OrderScreen({ route }: Props) {
+  const { lang, t } = useI18n();
   const navigation = useNavigation();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
@@ -243,11 +245,11 @@ export default function OrderScreen({ route }: Props) {
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.headerBackButton}
         >
-          <Text style={styles.headerBackButtonText}>‹ Hauptmenü</Text>
+          <Text style={styles.headerBackButtonText}>{t('backToHome')}</Text>
         </TouchableOpacity>
       ),
     });
-  }, [navigation]);
+  }, [navigation, t]);
 
   const groupedCategories = useMemo(() => {
     const groups: Record<MenuGroup, typeof categories> = { essen: [], getraenke: [], nachspeisen: [] };
@@ -455,7 +457,7 @@ export default function OrderScreen({ route }: Props) {
       .single();
 
     if (tableError || !table) {
-      setSubmitError(tableError?.message ?? 'Tisch konnte nicht angelegt werden.');
+      setSubmitError(tableError?.message ?? t('tableCreateError'));
       setSubmitting(false);
       return;
     }
@@ -467,7 +469,7 @@ export default function OrderScreen({ route }: Props) {
       .single();
 
     if (orderError || !order) {
-      setSubmitError(orderError?.message ?? 'Bestellung konnte nicht angelegt werden.');
+      setSubmitError(orderError?.message ?? t('orderCreateError'));
       setSubmitting(false);
       return;
     }
@@ -512,7 +514,7 @@ export default function OrderScreen({ route }: Props) {
   if (error) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Menü konnte nicht geladen werden: {error}</Text>
+        <Text style={styles.errorText}>{t('menuLoadError', { error })}</Text>
       </View>
     );
   }
@@ -531,7 +533,7 @@ export default function OrderScreen({ route }: Props) {
       {activeCategory ? (
         <>
           <TouchableOpacity onPress={() => setActiveCategoryId(null)} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Kategorien</Text>
+            <Text style={styles.backButtonText}>{t('backToCategories')}</Text>
           </TouchableOpacity>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionEmoji}>
@@ -569,9 +571,9 @@ export default function OrderScreen({ route }: Props) {
                     <Text style={styles.itemHanzi}>{item.name_de}</Text>
                   )}
                 </View>
-                {itemPriceLabel(item) && (
+                {itemPriceLabel(item, lang) && (
                   <View style={styles.itemPricePill}>
-                    <Text style={styles.itemPrice}>{itemPriceLabel(item)}</Text>
+                    <Text style={styles.itemPrice}>{itemPriceLabel(item, lang)}</Text>
                   </View>
                 )}
                 <Text style={styles.itemAdd}>＋</Text>
@@ -595,7 +597,7 @@ export default function OrderScreen({ route }: Props) {
           >
             <Text style={styles.tableInputEmoji}>🪑</Text>
             <Text style={tableNumber ? styles.tableInputValueLarge : styles.tableInputPlaceholder}>
-              {tableNumber ? `Tisch ${tableNumber}` : 'Tischnummer eingeben'}
+              {tableNumber ? t('table', { n: tableNumber }) : t('enterTableNumber')}
             </Text>
           </TouchableOpacity>
           <NumpadDialog
@@ -613,7 +615,7 @@ export default function OrderScreen({ route }: Props) {
             renderItem={({ item: group }) => (
               <View style={styles.groupSection}>
                 <Text style={styles.groupTitle}>
-                  {MENU_GROUP_EMOJIS[group]} {MENU_GROUP_LABELS[group]}
+                  {MENU_GROUP_EMOJIS[group]} {menuGroupLabel(group, lang)}
                 </Text>
                 <View style={styles.categoryGrid}>
                   {groupedCategories[group].map((category) => {
@@ -664,7 +666,7 @@ export default function OrderScreen({ route }: Props) {
               >
                 <View style={styles.cartHandleBar} />
                 <Animated.Text style={[styles.cartHandleText, { transform: [{ scale: cartBumpScale }] }]}>
-                  🛒 {cartCount} im Warenkorb · {formatPrice(cartTotal)} {cartExpanded ? '▾' : '▴'}
+                  {t('cartSummary', { n: cartCount, sum: formatPrice(cartTotal) })} {cartExpanded ? '▾' : '▴'}
                 </Animated.Text>
               </TouchableOpacity>
               <Animated.View style={[styles.cartItemsWrap, { height: cartItemsHeight }]}>
@@ -698,7 +700,7 @@ export default function OrderScreen({ route }: Props) {
                               style={line.note ? styles.noteFieldText : styles.noteFieldPlaceholder}
                               numberOfLines={2}
                             >
-                              {line.note ? `💬 ${line.note}` : '💬 Notiz…'}
+                              {line.note ? `💬 ${line.note}` : t('notePlaceholder')}
                             </Text>
                           </TouchableOpacity>
                         </View>
@@ -722,12 +724,13 @@ export default function OrderScreen({ route }: Props) {
               {submitError && <Text style={styles.errorText}>{submitError}</Text>}
               <View style={styles.cartTotalRow}>
                 <Text style={styles.cartTotalLabel}>
-                  Summe{cartHasUnpricedItem ? ' (unvollständig, s.u.)' : ''}
+                  {t('sum')}
+                  {cartHasUnpricedItem ? t('sumIncomplete') : ''}
                 </Text>
                 <Text style={styles.cartTotalValue}>{formatPrice(cartTotal)}</Text>
               </View>
               {cartHasUnpricedItem && (
-                <Text style={styles.cartTotalNote}>Enthält Positionen ohne hinterlegten Preis.</Text>
+                <Text style={styles.cartTotalNote}>{t('unpricedNote')}</Text>
               )}
               <TouchableOpacity
                 style={[styles.submitButton, (!tableNumber || submitting) && styles.submitButtonDisabled]}
@@ -735,7 +738,7 @@ export default function OrderScreen({ route }: Props) {
                 disabled={!tableNumber || submitting}
               >
                 <Text style={styles.submitButtonText}>
-                  {submitting ? '⏳ Wird gesendet…' : !tableNumber ? '🪑 Erst Tisch wählen' : `🚀 Bestellung senden (${cartCount})`}
+                  {submitting ? t('sending') : !tableNumber ? t('chooseTableFirst') : t('sendOrder', { n: cartCount })}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -806,6 +809,7 @@ function NumpadDialog({
   onDone: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   // onChange schreibt bei jedem Tastendruck direkt in die Tischnummer des Eltern-Screens
   // (für die Live-Anzeige hinter dem Dialog), "Abbrechen" muss also den Stand von vor dem
   // Öffnen separat merken, um ihn zurückzuschreiben, statt nur den Dialog zu schließen.
@@ -835,7 +839,7 @@ function NumpadDialog({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCancel}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>🪑 Tischnummer</Text>
+          <Text style={styles.modalTitle}>{t('tableNumberTitle')}</Text>
           <Text style={styles.numpadDisplay}>{value || '—'}</Text>
           <View style={styles.numpadGrid}>
             {NUMPAD_KEYS.map((key) => (
@@ -849,10 +853,10 @@ function NumpadDialog({
             onPress={onDone}
             disabled={!value}
           >
-            <Text style={styles.submitButtonText}>Fertig</Text>
+            <Text style={styles.submitButtonText}>{t('done')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={handleCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -874,20 +878,21 @@ function LeaveConfirmDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
           <Text style={styles.modalEmoji}>⚠️</Text>
-          <Text style={styles.modalTitle}>Bestellung verwerfen?</Text>
+          <Text style={styles.modalTitle}>{t('discardTitle')}</Text>
           <Text style={styles.modalSubtitle}>
-            Die aufgenommene Bestellung ist noch nicht abgeschickt und geht beim Verlassen verloren.
+            {t('discardBody')}
           </Text>
           <TouchableOpacity style={styles.leaveConfirmButton} onPress={onConfirm}>
-            <Text style={styles.submitButtonText}>Ja, verwerfen</Text>
+            <Text style={styles.submitButtonText}>{t('discardConfirm')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.leaveConfirmCancelText}>Zurück zur Bestellung</Text>
+            <Text style={styles.leaveConfirmCancelText}>{t('backToOrder')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -908,13 +913,14 @@ function CartBar({
   bumpScale: Animated.Value;
   bottomOffset: number;
 }) {
+  const { t } = useI18n();
   if (cartCount === 0) return null;
   return (
     <AnimatedTouchableOpacity
       style={[styles.cartBarMini, { bottom: bottomOffset, transform: [{ scale: bumpScale }] }]}
       onPress={onPress}
     >
-      <Text style={styles.cartBarMiniText}>🛒 {cartCount} im Warenkorb · Zur Bestellung →</Text>
+      <Text style={styles.cartBarMiniText}>{t('cartToOrder', { n: cartCount })}</Text>
     </AnimatedTouchableOpacity>
   );
 }
@@ -930,6 +936,7 @@ function VariantDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   return (
     <Modal visible={item !== null} transparent animationType="fade" onRequestClose={onCancel}>
       <View style={styles.modalOverlay}>
@@ -950,7 +957,7 @@ function VariantDialog({
             </TouchableOpacity>
           ))}
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -980,6 +987,7 @@ function CustomEntryDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   const [description, setDescription] = useState('');
   const [priceText, setPriceText] = useState('');
   const [priceNumpadOpen, setPriceNumpadOpen] = useState(false);
@@ -1017,14 +1025,14 @@ function CustomEntryDialog({
           <Text style={styles.modalSubtitle}>{item.name_de}</Text>
           <TextInput
             style={styles.customEntryInput}
-            placeholder="Beschreibung"
+            placeholder={t('description')}
             value={description}
             onChangeText={setDescription}
             autoFocus
           />
           <TouchableOpacity style={styles.customEntryInput} onPress={() => setPriceNumpadOpen(true)}>
             <Text style={priceText ? styles.tableInputValue : styles.tableInputPlaceholder}>
-              {priceText ? `${priceText} €` : 'Preis eingeben'}
+              {priceText ? `${priceText} €` : t('enterPrice')}
             </Text>
           </TouchableOpacity>
           <PriceNumpadDialog
@@ -1040,11 +1048,11 @@ function CustomEntryDialog({
             disabled={!canConfirm}
           >
             <Text style={styles.submitButtonText}>
-              {editing ? '✅ Änderungen übernehmen' : '🛒 Zum Warenkorb hinzufügen'}
+              {editing ? t('applyChanges') : t('addToCart')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -1066,6 +1074,7 @@ function NoteDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   const [text, setText] = useState('');
 
   // Bei jeder neu geöffneten Warenkorb-Zeile die lokale Eingabe auf deren aktuellen
@@ -1083,23 +1092,23 @@ function NoteDialog({
     <Modal visible={line !== null} transparent animationType="fade" onRequestClose={onCancel}>
       <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>💬 Notiz</Text>
+          <Text style={styles.modalTitle}>{t('noteTitle')}</Text>
           <Text style={styles.modalSubtitle}>
             {line.nameHanzi} ({line.nameDe})
           </Text>
           <TextInput
             style={[styles.customEntryInput, styles.noteDialogInput]}
-            placeholder="z.B. ohne Zwiebeln"
+            placeholder={t('noteExample')}
             value={text}
             onChangeText={setText}
             multiline
             autoFocus
           />
           <TouchableOpacity style={styles.submitButton} onPress={() => onConfirm(text.trim())}>
-            <Text style={styles.submitButtonText}>Übernehmen</Text>
+            <Text style={styles.submitButtonText}>{t('apply')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -1125,6 +1134,7 @@ function PriceNumpadDialog({
   onDone: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   function press(key: (typeof PRICE_NUMPAD_KEYS)[number]) {
     if (key === 'back') {
       onChange(value.slice(0, -1));
@@ -1139,7 +1149,7 @@ function PriceNumpadDialog({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onDone}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>💶 Preis</Text>
+          <Text style={styles.modalTitle}>{t('priceTitle')}</Text>
           <Text style={styles.numpadDisplay}>{value ? `${value} €` : '—'}</Text>
           <View style={styles.numpadGrid}>
             {PRICE_NUMPAD_KEYS.map((key) => (
@@ -1149,7 +1159,7 @@ function PriceNumpadDialog({
             ))}
           </View>
           <TouchableOpacity style={styles.submitButton} onPress={onDone}>
-            <Text style={styles.submitButtonText}>Fertig</Text>
+            <Text style={styles.submitButtonText}>{t('done')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1180,6 +1190,7 @@ function ItemOptionsDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null);
   const [extraQuantities, setExtraQuantities] = useState<Record<string, number>>({});
 
@@ -1254,7 +1265,7 @@ function ItemOptionsDialog({
 
           {item.extra_options && item.extra_options.length > 0 && (
             <View style={styles.optionsSection}>
-              <Text style={styles.optionsSectionTitle}>✨ Extras</Text>
+              <Text style={styles.optionsSectionTitle}>{t('extras')}</Text>
               {item.extra_options.map((extra) => {
                 const qty = extraQuantities[extra.name_de] ?? 0;
                 return (
@@ -1293,11 +1304,11 @@ function ItemOptionsDialog({
             disabled={!canConfirm}
           >
             <Text style={styles.submitButtonText}>
-              {editing ? '✅ Änderungen übernehmen' : '🛒 Zum Warenkorb hinzufügen'}
+              {editing ? t('applyChanges') : t('addToCart')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>

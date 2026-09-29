@@ -163,6 +163,23 @@ Rolle des Geräts:
 
 Rollenwahl bestimmt nur Filter + Sortierung + UI-Layout, nicht das Datenmodell.
 
+## Sprache (Deutsch / Chinesisch)
+
+Umschalter "中文" / "DE" rechts in jeder App-Leiste (neben Hell/Dunkel), gemerkt pro Gerät
+(AsyncStorage `yami:language`, Standard Deutsch). Alle Oberflächentexte liegen in
+`src/i18n/strings.ts` (je Schlüssel `de` + `zh`), Zugriff über `useI18n().t(key, params)`.
+Regeln:
+- **Bar bleibt immer Deutsch** — die Bar-Ansicht selbst (`DeviceTicketBoard` mit
+  `targetDevice='bar'` übersetzt fest auf `de`), der Menüpunkt "Bar" sowie alles zu
+  Getränken/Nachspeisen (Gruppen-Überschriften in der Bestellung, Status-Bereiche,
+  Kategorienamen ohne Hanzi) — dort wird auf Deutsch gearbeitet.
+- **Küche:** Gerichtenamen auf den Tickets bleiben immer zweisprachig (Hanzi + Deutsch). Die
+  restliche Küchen-Oberfläche ist auf Chinesisch rein chinesisch (Tabs, Stationen 小吃/主食/
+  烤肉, "{n}号桌", "✓ 全部完成"); auf Deutsch bleibt sie wie bisher zweisprachig beschriftet.
+- Überall sonst folgt die Oberfläche der gewählten Sprache; Gerichtenamen kommen weiterhin aus
+  der Datenbank (Hanzi + Deutsch, wo vorhanden). Gespeicherte Texte (Rabatt-Beschreibungen,
+  Protokoll-Einträge, Notizen) werden nicht übersetzt.
+
 ## Kategorien (Menü-Buttons in der Bestellaufnahme)
 
 ```
