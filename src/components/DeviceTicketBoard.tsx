@@ -54,6 +54,12 @@ type PhoneStation = 'all' | 'vorspeise' | 'hauptspeise' | 'barbecue';
 const PHONE_STATIONS: PhoneStation[] = ['all', 'vorspeise', 'hauptspeise', 'barbecue'];
 const PHONE_STATION_SLOT = { vorspeise: 'primary', hauptspeise: 'secondary', barbecue: 'tertiary' } as const;
 
+// Handy-Ansicht der Bar (siehe PhoneBarBoard): zuletzt gewählter Filter Alle/Getränke/
+// Nachspeisen, gleiches Prinzip wie PHONE_STATION_STORAGE_KEY bei der Küche.
+const PHONE_BAR_FILTER_STORAGE_KEY = 'yami:phone-bar-filter';
+type PhoneBarFilter = 'all' | 'getraenke' | 'nachspeisen';
+const PHONE_BAR_FILTERS: PhoneBarFilter[] = ['all', 'getraenke', 'nachspeisen'];
+
 // Standardbreiten, bevor zum ersten Mal gezogen wurde — spiegeln die bisherigen festen
 // flex-Werte: bei der Küche Vorspeise/Hauptspeise gleich breit, Barbecue schmaler (kurze
 // Gerichtenamen); bei der Bar Getränke am breitesten (mehr Bestellungen als Nachspeisen),
@@ -259,6 +265,23 @@ export default function DeviceTicketBoard({
     setPhoneStation(next);
     AsyncStorage.setItem(PHONE_STATION_STORAGE_KEY, next);
   }
+
+  const [phoneBarFilter, setPhoneBarFilter] = useState<PhoneBarFilter>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(PHONE_BAR_FILTER_STORAGE_KEY).then((stored) => {
+      if (!cancelled && stored && (PHONE_BAR_FILTERS as string[]).includes(stored)) setPhoneBarFilter(stored as PhoneBarFilter);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changePhoneBarFilter(next: PhoneBarFilter) {
+    setPhoneBarFilter(next);
+    AsyncStorage.setItem(PHONE_BAR_FILTER_STORAGE_KEY, next);
+  }
   // Standardmäßig an — Küche/Bar können den Ton per Glocken-Button stumm schalten
   // (z.B. während einer Pause). Wird in AsyncStorage gemerkt, damit die Einstellung
   // erhalten bleibt, wenn die App in den Hintergrund/Task-Wechsel geht oder neu
@@ -436,6 +459,18 @@ export default function DeviceTicketBoard({
     };
   }, [open, isBar]);
 
+  // Nur für die Handy-Ansicht der Bar (PhoneBarBoard): "Vergangene Bestellungen" je
+  // Getränke/Nachspeisen gefiltert — ganze Tickets, deren Positionen DIESER Gruppe alle
+  // fertig sind (wie stationDoneTickets bei der Küche). Ohne Filter ("Alle") zeigt die
+  // Handy-Ansicht wie das Tablet `done` (ganze Bestellung an der Bar fertig).
+  const barDoneByGroup = useMemo(() => {
+    if (!isBar) return null;
+    return {
+      getraenke: stationDoneTickets(orders, (item) => item.menu_item.category.menu_group === 'getraenke'),
+      nachspeisen: stationDoneTickets(orders, (item) => item.menu_item.category.menu_group === 'nachspeisen'),
+    };
+  }, [orders, isBar]);
+
   // Küchen-Stationen (Vorspeise | Hauptspeise | Barbecue): pro Station die offenen und die
   // bereits komplett erledigten Tickets, unabhängig vom gerade gewählten Tab — die Tab-Leiste
   // zeigt "Offen (n)" und "Vergangene Bestellungen (n)" gleichzeitig. "openOrders" sind ganze
@@ -533,6 +568,45 @@ export default function DeviceTicketBoard({
         doneCardCount={kitchenDoneCardCount}
         stations={kitchenStations!}
         dishCounts={kitchenDishCounts!}
+        soundEnabled={soundEnabled}
+        onToggleSound={toggleSound}
+        completeAllLabel={completeAllLabel}
+        cardBackground={cardBackground}
+        onToggleItem={setItemsStatus}
+        onCompleteOrder={completeOrder}
+      />
+    );
+  }
+
+  if (isBar && isPhone) {
+    return (
+      <PhoneBarBoard
+        styles={phoneStyles}
+        t={bt}
+        tab={tab}
+        onTabChange={setTab}
+        filter={phoneBarFilter}
+        onFilterChange={changePhoneBarFilter}
+        open={open}
+        done={done}
+        groups={{
+          getraenke: {
+            title: barColumns!.primaryTitle,
+            openOrders: barColumns!.primaryOrders,
+            openEmptyText: barColumns!.primaryEmptyText,
+            doneOrders: barDoneByGroup!.getraenke,
+            doneEmptyText: 'Noch keine erledigten Getränke.',
+            dishCounts: barDishCounts!.primary,
+          },
+          nachspeisen: {
+            title: barColumns!.secondaryTitle,
+            openOrders: barColumns!.secondaryOrders,
+            openEmptyText: barColumns!.secondaryEmptyText,
+            doneOrders: barDoneByGroup!.nachspeisen,
+            doneEmptyText: 'Noch keine erledigten Nachspeisen.',
+            dishCounts: barDishCounts!.secondary,
+          },
+        }}
         soundEnabled={soundEnabled}
         onToggleSound={toggleSound}
         completeAllLabel={completeAllLabel}
@@ -1030,40 +1104,255 @@ function PhoneKitchenBoard({
         </TouchableOpacity>
       </View>
 
-      <View style={styles.phoneStationBar}>
-        {PHONE_STATIONS.map((s) => {
-          const active = s === station;
-          const count = s === 'all' ? allCount : countFor(s);
-          const label = s === 'all' ? t('stationAll') : stations[PHONE_STATION_SLOT[s]].title;
-          return (
-            <TouchableOpacity
-              key={s}
-              style={[styles.phoneStationChip, active && styles.phoneStationChipActive]}
-              onPress={() => onStationChange(s)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
+      <PhoneFilterBar
+        styles={styles}
+        options={PHONE_STATIONS.map((s) => ({
+          key: s,
+          label: s === 'all' ? t('stationAll') : stations[PHONE_STATION_SLOT[s]].title,
+          count: s === 'all' ? allCount : countFor(s),
+        }))}
+        selected={station}
+        onSelect={onStationChange}
+        highlightCounts={tab !== 'fertig'}
+      />
+
+      {content}
+    </View>
+  );
+}
+
+// Filter-Leiste der Handy-Ansichten (Küche: 全部/小吃/主食/烤肉, Bar: Alle/Getränke/
+// Nachspeisen) — gleich breite Kacheln mit Name + Zähler, aktive Kachel in Akzentfarbe.
+function PhoneFilterBar<K extends string>({
+  styles,
+  options,
+  selected,
+  onSelect,
+  highlightCounts,
+}: {
+  styles: PhoneStyles;
+  options: { key: K; label: string; count: number }[];
+  selected: K;
+  onSelect: (key: K) => void;
+  // Zähler > 0 in Akzentfarbe (offene Arbeit) — im Vergangene-Bestellungen-Tab aus, da dort
+  // nichts mehr ansteht.
+  highlightCounts: boolean;
+}) {
+  return (
+    <View style={styles.phoneStationBar}>
+      {options.map(({ key, label, count }) => {
+        const active = key === selected;
+        return (
+          <TouchableOpacity
+            key={key}
+            style={[styles.phoneStationChip, active && styles.phoneStationChipActive]}
+            onPress={() => onSelect(key)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+          >
+            <Text
+              style={[styles.phoneStationChipLabel, active && styles.phoneStationChipLabelActive]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
             >
-              <Text
-                style={[styles.phoneStationChipLabel, active && styles.phoneStationChipLabelActive]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
-              >
-                {label}
-              </Text>
-              <Text
-                style={[
-                  styles.phoneStationChipCount,
-                  count > 0 && tab !== 'fertig' && styles.phoneStationChipCountHot,
-                  active && styles.phoneStationChipCountActive,
-                ]}
-              >
-                {count}
-              </Text>
+              {label}
+            </Text>
+            <Text
+              style={[
+                styles.phoneStationChipCount,
+                count > 0 && highlightCounts && styles.phoneStationChipCountHot,
+                active && styles.phoneStationChipCountActive,
+              ]}
+            >
+              {count}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+type BarGroupData = {
+  title: string;
+  openOrders: GroupedOrder[];
+  openEmptyText: string;
+  doneOrders: GroupedOrder[];
+  doneEmptyText: string;
+  dishCounts: DishCount[];
+};
+
+// Handy-Ansicht der Bar (siehe useIsPhone) — Gegenstück zu PhoneKitchenBoard, immer
+// Deutsch. Statt drei Spalten nebeneinander (Getränke | Nachspeisen | Vergangene
+// Bestellungen):
+//   1. Tabs Offen / Anzahl / Erledigt — "Vergangene Bestellungen" wird auf dem Handy zum
+//      dritten Tab, da für eine dauerhaft sichtbare dritte Spalte kein Platz ist,
+//   2. Filter-Leiste Alle | Getränke | Nachspeisen (gemerkt pro Gerät),
+//   3. EINE Spalte volle Breite mit denselben Ticket-Karten (TicketCard). "Alle" zeigt in
+//      Offen/Anzahl Getränke und Nachspeisen untereinander mit fixierten Überschriften, im
+//      Erledigt-Tab wie auf dem Tablet ganze an der Bar fertige Bestellungen (`done`).
+function PhoneBarBoard({
+  styles,
+  t,
+  tab,
+  onTabChange,
+  filter,
+  onFilterChange,
+  open,
+  done,
+  groups,
+  soundEnabled,
+  onToggleSound,
+  completeAllLabel,
+  cardBackground,
+  onToggleItem,
+  onCompleteOrder,
+}: {
+  styles: PhoneStyles;
+  t: BoardT;
+  tab: Tab;
+  onTabChange: (tab: Tab) => void;
+  filter: PhoneBarFilter;
+  onFilterChange: (filter: PhoneBarFilter) => void;
+  open: GroupedOrder[];
+  done: GroupedOrder[];
+  groups: Record<'getraenke' | 'nachspeisen', BarGroupData>;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
+  completeAllLabel: string;
+  cardBackground: Record<OrderProgress, object>;
+  onToggleItem: (itemIds: string[], status: OrderItemStatus) => void;
+  onCompleteOrder: (order: GroupedOrder) => void;
+}) {
+  function countFor(g: 'getraenke' | 'nachspeisen'): number {
+    if (tab === 'fertig') return groups[g].doneOrders.length;
+    if (tab === 'anzahl') return sumCounts(groups[g].dishCounts);
+    return countOpenItems(groups[g].openOrders);
+  }
+  const allCount = tab === 'fertig' ? done.length : countFor('getraenke') + countFor('nachspeisen');
+
+  const groupList: ('getraenke' | 'nachspeisen')[] = filter === 'all' ? ['getraenke', 'nachspeisen'] : [filter];
+  const showSectionHeaders = filter === 'all';
+  const suffix = tab === 'fertig' ? 'erledigt' : 'offen';
+
+  const tabs: { key: Tab; label: string; count: number }[] = [
+    { key: 'offen', label: 'Offen', count: open.length },
+    { key: 'anzahl', label: 'Anzahl', count: countOpenItems(open) },
+    { key: 'fertig', label: 'Erledigt', count: done.length },
+  ];
+
+  let content: React.ReactNode;
+  if (tab === 'anzahl') {
+    const sections = groupList
+      .map((g) => ({ key: g, title: groups[g].title, count: countFor(g), data: groups[g].dishCounts }))
+      .filter((section) => !showSectionHeaders || section.data.length > 0);
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(entry) => entry.key}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          showSectionHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: entry }) => (
+          <View style={styles.countCard}>
+            <Text style={styles.countCardCount}>{entry.count}×</Text>
+            <View style={styles.countCardTextWrap}>
+              <Text style={styles.countCardDish}>{entry.dishLabel}</Text>
+              {entry.variantLabel && <Text style={styles.countCardVariant}>{entry.variantLabel}</Text>}
+            </View>
+          </View>
+        )}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>{filter === 'all' ? 'Nichts offen.' : groups[filter].openEmptyText}</Text>
+        }
+      />
+    );
+  } else {
+    const sections =
+      tab === 'fertig' && filter === 'all'
+        ? // Wie die Vergangene-Bestellungen-Spalte auf dem Tablet: ganze Bestellungen, bei
+          // denen an der Bar alles fertig ist, neueste zuerst — ohne Abschnitte.
+          done.length > 0
+          ? [{ key: 'done', title: '', count: done.length, data: done }]
+          : []
+        : groupList
+            .map((g) => ({
+              key: g,
+              title: groups[g].title,
+              count: countFor(g),
+              data: tab === 'fertig' ? groups[g].doneOrders : groups[g].openOrders,
+            }))
+            .filter((section) => !showSectionHeaders || section.data.length > 0);
+    const emptyText =
+      filter === 'all'
+        ? tab === 'fertig'
+          ? 'Noch keine erledigten Bestellungen.'
+          : 'Nichts offen.'
+        : tab === 'fertig'
+          ? groups[filter].doneEmptyText
+          : groups[filter].openEmptyText;
+    const withHeaders = showSectionHeaders && tab !== 'fertig';
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(order) => order.orderId}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          withHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: order }) => (
+          <TicketCard
+            t={t}
+            completeAllLabel={completeAllLabel}
+            order={order}
+            large={false}
+            styles={styles}
+            cardBackground={cardBackground}
+            onToggleItem={onToggleItem}
+            onCompleteOrder={onCompleteOrder}
+            allowComplete={tab !== 'fertig'}
+            showFinishedAt={tab === 'fertig'}
+          />
+        )}
+        ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.tabBar}>
+        <View style={styles.tabsRow}>
+          {tabs.map(({ key, label, count }) => (
+            <TouchableOpacity key={key} style={[styles.tab, tab === key && styles.tabActive]} onPress={() => onTabChange(key)}>
+              <BarTabLabel label={label} count={count} active={tab === key} large={false} styles={styles} />
             </TouchableOpacity>
-          );
-        })}
+          ))}
+        </View>
+        <TouchableOpacity style={styles.bellButton} onPress={onToggleSound} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.bellButtonText}>{soundEnabled ? '🔔' : '🔕'}</Text>
+        </TouchableOpacity>
       </View>
+
+      <PhoneFilterBar
+        styles={styles}
+        options={PHONE_BAR_FILTERS.map((f) => ({
+          key: f,
+          label: f === 'all' ? 'Alle' : groups[f].title,
+          count: f === 'all' ? allCount : countFor(f),
+        }))}
+        selected={filter}
+        onSelect={onFilterChange}
+        highlightCounts={tab !== 'fertig'}
+      />
 
       {content}
     </View>
