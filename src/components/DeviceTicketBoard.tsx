@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, PanResponder, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import type { PanResponderInstance } from 'react-native';
+import { ActivityIndicator, FlatList, Image, PanResponder, SectionList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import type { ImageStyle, PanResponderInstance, TextStyle, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDeviceOrders, type DeviceOrderItem, type GroupedOrder } from '../hooks/useDeviceOrders';
 import { useNewOrderChime } from '../hooks/useNewOrderChime';
+import { useIsPhone } from '../hooks/useIsPhone';
 import type { OrderItemStatus, TargetDevice } from '../types/database';
 import type { ThemeColors } from '../theme/colors';
 import { useTheme } from '../theme/ThemeContext';
@@ -17,7 +18,10 @@ import type { StringKey } from '../i18n/strings';
 type BoardT = (key: StringKey, params?: Record<string, string | number>) => string;
 
 type Tab = 'offen' | 'fertig' | 'anzahl';
-type BoardStyles = ReturnType<typeof createStyles>;
+// Bewusst als "irgendein Style je Schlüssel" statt der exakten Literal-Typen aus
+// StyleSheet.create — sonst ließe sich die Handy-Variante (createPhoneStyles, z.B.
+// emptyBanner mit flexDirection 'column' statt 'row') nicht an dieselben Komponenten geben.
+type BoardStyles = { [K in keyof ReturnType<typeof createStyles>]: ViewStyle & TextStyle & ImageStyle };
 
 // Zeigt sich, wenn im "Offen"-Tab (Küche oder Bar) gerade nichts zu tun ist — links
 // der Spruch, rechts das Bild, siehe EmptyBoardBanner unten.
@@ -42,6 +46,13 @@ function largeModeStorageKey(targetDevice: TargetDevice) {
 function stationRatiosStorageKey(targetDevice: TargetDevice) {
   return `yami:station-ratios:${targetDevice}`;
 }
+
+// Handy-Ansicht der Küche (siehe PhoneKitchenBoard): zuletzt gewählter Stationen-Filter,
+// damit z.B. ein Handy, das fest am Grill liegt, direkt wieder auf "烤肉" steht.
+const PHONE_STATION_STORAGE_KEY = 'yami:phone-kitchen-station';
+type PhoneStation = 'all' | 'vorspeise' | 'hauptspeise' | 'barbecue';
+const PHONE_STATIONS: PhoneStation[] = ['all', 'vorspeise', 'hauptspeise', 'barbecue'];
+const PHONE_STATION_SLOT = { vorspeise: 'primary', hauptspeise: 'secondary', barbecue: 'tertiary' } as const;
 
 // Standardbreiten, bevor zum ersten Mal gezogen wurde — spiegeln die bisherigen festen
 // flex-Werte: bei der Küche Vorspeise/Hauptspeise gleich breit, Barbecue schmaler (kurze
@@ -203,7 +214,6 @@ export default function DeviceTicketBoard({
   large?: boolean;
 }) {
   const { colors } = useTheme();
-  const styles = useThemedStyles(createStyles);
   const { lang } = useI18n();
   const uiLang = targetDevice === 'bar' ? 'de' : lang;
   const bt: BoardT = (key, params) => translate(uiLang, key, params);
@@ -227,6 +237,28 @@ export default function DeviceTicketBoard({
     [rawOrders]
   );
   const [tab, setTab] = useState<Tab>('offen');
+  // Auf dem Handy (kürzeste Seite < 600dp) bekommt die Küche statt der drei Spalten
+  // nebeneinander eine eigene, einspaltige Ansicht (PhoneKitchenBoard) — drei Spalten mit
+  // je zwei Karten waren auf ~390px Breite unlesbar gequetscht. Tablet/Laptop unverändert.
+  const isPhone = useIsPhone();
+  const styles = useThemedStyles(createStyles);
+  const phoneStyles = useThemedStyles(createPhoneStyles);
+  const [phoneStation, setPhoneStation] = useState<PhoneStation>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(PHONE_STATION_STORAGE_KEY).then((stored) => {
+      if (!cancelled && stored && (PHONE_STATIONS as string[]).includes(stored)) setPhoneStation(stored as PhoneStation);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changePhoneStation(next: PhoneStation) {
+    setPhoneStation(next);
+    AsyncStorage.setItem(PHONE_STATION_STORAGE_KEY, next);
+  }
   // Standardmäßig an — Küche/Bar können den Ton per Glocken-Button stumm schalten
   // (z.B. während einer Pause). Wird in AsyncStorage gemerkt, damit die Einstellung
   // erhalten bleibt, wenn die App in den Hintergrund/Task-Wechsel geht oder neu
@@ -483,6 +515,31 @@ export default function DeviceTicketBoard({
       <View style={styles.centered}>
         <Text style={styles.errorText}>{bt('ordersLoadError', { error })}</Text>
       </View>
+    );
+  }
+
+  if (targetDevice === 'kitchen' && isPhone) {
+    return (
+      <PhoneKitchenBoard
+        styles={phoneStyles}
+        t={bt}
+        lang={lang}
+        tab={tab}
+        onTabChange={setTab}
+        station={phoneStation}
+        onStationChange={changePhoneStation}
+        openCount={open.length}
+        openItemCount={countOpenItems(open)}
+        doneCardCount={kitchenDoneCardCount}
+        stations={kitchenStations!}
+        dishCounts={kitchenDishCounts!}
+        soundEnabled={soundEnabled}
+        onToggleSound={toggleSound}
+        completeAllLabel={completeAllLabel}
+        cardBackground={cardBackground}
+        onToggleItem={setItemsStatus}
+        onCompleteOrder={completeOrder}
+      />
     );
   }
 
@@ -787,6 +844,232 @@ export default function DeviceTicketBoard({
   );
 }
 
+type KitchenStationData = {
+  title: string;
+  openOrders: GroupedOrder[];
+  openEmptyText: string;
+  doneOrders: GroupedOrder[];
+  doneEmptyText: string;
+};
+type KitchenStationsData = Record<'primary' | 'secondary' | 'tertiary', KitchenStationData>;
+type KitchenDishCountsData = Record<'primary' | 'secondary' | 'tertiary', DishCount[]>;
+type PhoneStyles = ReturnType<typeof createPhoneStyles>;
+
+// Handy-Ansicht der Küche (siehe useIsPhone) — statt drei Stationen-Spalten nebeneinander:
+//   1. kompakte Tab-Leiste (待做 / 已完成 / 数量, deutsche Kurzform darunter), nur Glocke,
+//      keine "−"/"+"-Kartengröße (auf dem Handy gibt es nur eine sinnvolle Größe),
+//   2. darunter eine Stationen-Leiste als Filter (全部 | 小吃 | 主食 | 烤肉) mit Zähler je
+//      Station — "全部" zeigt alle Stationen untereinander mit fixierten Abschnitts-
+//      Überschriften, eine einzelne Station nur deren Tickets,
+//   3. EINE Spalte volle Breite mit denselben Ticket-Karten wie auf dem Tablet (TicketCard,
+//      gleiches Abhaken/Wischen/"全部完成"), nur mit etwas größerer Schrift/Haken für das
+//      kleine Display.
+// Datenbasis (kitchenStations/kitchenDishCounts) ist exakt dieselbe wie auf dem Tablet.
+function PhoneKitchenBoard({
+  styles,
+  t,
+  lang,
+  tab,
+  onTabChange,
+  station,
+  onStationChange,
+  openCount,
+  openItemCount,
+  doneCardCount,
+  stations,
+  dishCounts,
+  soundEnabled,
+  onToggleSound,
+  completeAllLabel,
+  cardBackground,
+  onToggleItem,
+  onCompleteOrder,
+}: {
+  styles: PhoneStyles;
+  t: BoardT;
+  lang: string;
+  tab: Tab;
+  onTabChange: (tab: Tab) => void;
+  station: PhoneStation;
+  onStationChange: (station: PhoneStation) => void;
+  openCount: number;
+  openItemCount: number;
+  doneCardCount: number;
+  stations: KitchenStationsData;
+  dishCounts: KitchenDishCountsData;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
+  completeAllLabel: string;
+  cardBackground: Record<OrderProgress, object>;
+  onToggleItem: (itemIds: string[], status: OrderItemStatus) => void;
+  onCompleteOrder: (order: GroupedOrder) => void;
+}) {
+  const de = lang === 'de';
+
+  function countFor(s: Exclude<PhoneStation, 'all'>): number {
+    const slot = PHONE_STATION_SLOT[s];
+    if (tab === 'offen') return countOpenItems(stations[slot].openOrders);
+    if (tab === 'fertig') return stations[slot].doneOrders.length;
+    return sumCounts(dishCounts[slot]);
+  }
+
+  const stationList: Exclude<PhoneStation, 'all'>[] =
+    station === 'all' ? ['vorspeise', 'hauptspeise', 'barbecue'] : [station];
+  const showSectionHeaders = station === 'all';
+  const suffix = tab === 'fertig' ? t('suffixDone') : t('suffixOpen');
+
+  const tabs: { key: Tab; hanzi: string; de: string; count: number }[] = [
+    { key: 'offen', hanzi: '待做', de: 'Offen', count: openCount },
+    { key: 'fertig', hanzi: '已完成', de: 'Fertig', count: doneCardCount },
+    { key: 'anzahl', hanzi: '数量', de: 'Anzahl', count: openItemCount },
+  ];
+
+  let content: React.ReactNode;
+  if (tab === 'offen' && openCount === 0) {
+    content = <EmptyBoardBanner large={false} styles={styles} />;
+  } else if (tab === 'anzahl') {
+    const sections = stationList
+      .map((s) => ({
+        key: s,
+        title: stations[PHONE_STATION_SLOT[s]].title,
+        count: countFor(s),
+        data: dishCounts[PHONE_STATION_SLOT[s]],
+      }))
+      .filter((section) => !showSectionHeaders || section.data.length > 0);
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(entry) => entry.key}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          showSectionHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: entry }) => (
+          <View style={styles.countCard}>
+            <Text style={styles.countCardCount}>{entry.count}×</Text>
+            <View style={styles.countCardTextWrap}>
+              <Text style={styles.countCardDish}>{entry.dishLabel}</Text>
+              {entry.variantLabel && <Text style={styles.countCardVariant}>{entry.variantLabel}</Text>}
+            </View>
+          </View>
+        )}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>
+            {station === 'all' ? t('emptyOpenAll') : stations[PHONE_STATION_SLOT[station]].openEmptyText}
+          </Text>
+        }
+      />
+    );
+  } else {
+    const sections = stationList
+      .map((s) => {
+        const data = stations[PHONE_STATION_SLOT[s]];
+        return {
+          key: s,
+          title: data.title,
+          count: countFor(s),
+          data: tab === 'offen' ? data.openOrders : data.doneOrders,
+        };
+      })
+      .filter((section) => !showSectionHeaders || section.data.length > 0);
+    const emptyText =
+      station === 'all'
+        ? tab === 'offen'
+          ? t('emptyOpenAll')
+          : t('emptyDoneAll')
+        : tab === 'offen'
+          ? stations[PHONE_STATION_SLOT[station]].openEmptyText
+          : stations[PHONE_STATION_SLOT[station]].doneEmptyText;
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(order) => order.orderId}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          showSectionHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: order }) => (
+          <TicketCard
+            t={t}
+            completeAllLabel={completeAllLabel}
+            order={order}
+            large={false}
+            styles={styles}
+            cardBackground={cardBackground}
+            onToggleItem={onToggleItem}
+            onCompleteOrder={onCompleteOrder}
+            allowComplete={tab === 'offen'}
+            showFinishedAt={tab === 'fertig'}
+          />
+        )}
+        ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
+      />
+    );
+  }
+
+  const allCount = countFor('vorspeise') + countFor('hauptspeise') + countFor('barbecue');
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.tabBar}>
+        <View style={styles.tabsRow}>
+          {tabs.map(({ key, hanzi, de: deLabel, count }) => (
+            <TouchableOpacity key={key} style={[styles.tab, tab === key && styles.tabActive]} onPress={() => onTabChange(key)}>
+              <KitchenTabLabel hanzi={hanzi} de={de ? deLabel : null} count={count} active={tab === key} large={false} styles={styles} />
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity style={styles.bellButton} onPress={onToggleSound} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.bellButtonText}>{soundEnabled ? '🔔' : '🔕'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.phoneStationBar}>
+        {PHONE_STATIONS.map((s) => {
+          const active = s === station;
+          const count = s === 'all' ? allCount : countFor(s);
+          const label = s === 'all' ? t('stationAll') : stations[PHONE_STATION_SLOT[s]].title;
+          return (
+            <TouchableOpacity
+              key={s}
+              style={[styles.phoneStationChip, active && styles.phoneStationChipActive]}
+              onPress={() => onStationChange(s)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text
+                style={[styles.phoneStationChipLabel, active && styles.phoneStationChipLabelActive]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {label}
+              </Text>
+              <Text
+                style={[
+                  styles.phoneStationChipCount,
+                  count > 0 && tab !== 'fertig' && styles.phoneStationChipCountHot,
+                  active && styles.phoneStationChipCountActive,
+                ]}
+              >
+                {count}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {content}
+    </View>
+  );
+}
+
 // Ersetzt die Ticket-Liste komplett, solange im "Offen"-Tab der Küche nichts ansteht
 // (statt nur eines schlichten ListEmptyComponent-Texts wie sonst) — ein kleiner Spaß für
 // ruhige Momente. Gilt für alle drei Spalten gleichzeitig (dieselbe `open`-Liste speist
@@ -982,181 +1265,226 @@ function TicketList({
       numColumns={columns}
       columnWrapperStyle={columns > 1 ? styles.cardRow : undefined}
       contentContainerStyle={[styles.listContent, large && styles.listContentLarge]}
-      renderItem={({ item: order }) => {
-        const finishedAtMs = showFinishedAt ? latestDoneAt(order) : 0;
-        const doneCount = order.items.filter((item) => item.status === 'fertig').length;
-        const itemGroups = groupItems(order.items);
-        const openGroupCount = itemGroups.filter((group) => group.item.status === 'offen').length;
-        const card = (
-          <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
-            <View style={styles.cardHeader}>
-              <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>{t('table', { n: order.table.number })}</Text>
-              <View style={styles.cardHeaderRight}>
-                <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>
-                  {showFinishedAt && finishedAtMs > 0
-                    ? t('finishedAt', { time: formatTime(new Date(finishedAtMs).toISOString()) })
-                    : formatTime(order.createdAt)}
-                </Text>
-                {order.items.length > 1 && (
-                  // Fortschritt des Tickets auf einen Blick ("2/3 erledigt"), da abgehakte
-                  // Positionen jetzt auf dem Ticket stehen bleiben statt zu verschwinden.
-                  <View style={[styles.progressPill, large && styles.progressPillLarge]}>
-                    <Text style={[styles.progressPillText, large && styles.progressPillTextLarge]}>
-                      ✓ {doneCount}/{order.items.length}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </View>
-            {itemGroups.map(({ key, item, ids }) => {
-            const isDone = item.status === 'fertig';
-            // Menge ("3×") direkt vor dem Gerichtenamen, auch bei 1× — steht so immer an
-            // derselben Stelle. Ab 2× in Akzentfarbe, damit Mehrfach-Portionen auffallen.
-            // Inline statt als eigene Spalte, damit schmale Küchenkarten nicht Breite verlieren.
-            const qtyPrefix = (
-              <Text style={[styles.qtyText, ids.length > 1 && styles.qtyTextMulti, isDone && styles.qtyTextDone]}>
-                {ids.length}×{' '}
-              </Text>
-            );
-            return (
-            // Jede Position hat rechts einen eigenen, großen Haken-Button — abgehakt wird NUR
-            // über ihn, nicht mehr über die ganze Zeile, damit ein flüchtiges Antippen der
-            // Karte (z.B. beim Scrollen) nicht aus Versehen die falsche Position abhakt.
-            // Abgehakte Positionen bleiben auf dem Ticket stehen (grüner Haken, grau/
-            // durchgestrichen); erneutes Antippen des Hakens macht das rückgängig.
-            <View key={key} style={[styles.itemRow, large && styles.itemRowLarge]}>
-            <View style={[styles.itemText, isDone && styles.itemTextDone]}>
-              {item.menu_item.name_hanzi ? (
-                <>
-                  <Text
-                    style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
-                  >
-                    {qtyPrefix}
-                    {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
-                    {item.menu_item.name_hanzi}
-                    {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
-                  </Text>
-                  <Text style={[styles.itemDe, large && styles.itemDeLarge, item.status === 'fertig' && styles.itemDone]}>
-                    {item.menu_item.name_de}
-                    {item.variant_de ? ` · ${item.variant_de}` : ''}
-                  </Text>
-                </>
-              ) : (
-                // Bar-Items haben kein Hanzi (an der Bar wird auf Deutsch gearbeitet) —
-                // deutschen Namen dann in der großen/fetten Zeile zeigen statt einer leeren
-                // Hanzi-Zeile über einem winzigen deutschen Namen darunter.
-                <Text
-                  style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
-                >
-                  {qtyPrefix}
-                  {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
-                  {item.menu_item.name_de}
-                  {item.variant_de ? ` · ${item.variant_de}` : ''}
-                </Text>
-              )}
-              {item.extras && item.extras.length > 0 && (
-                // Eigene auffällige Sprechblase statt nur kursivem Text — Extras (z.B.
-                // Ajitama-Ei/Mais bei Ramen) wurden von der Küche regelmäßig übersehen, wenn
-                // sie nur als kleine Textzeile zwischen Gericht und Notiz stand. Fester
-                // Amber-Ton (nicht colors.warning) + Icon, damit sie unabhängig von Hell-/
-                // Dunkelmodus und auch beim flüchtigen Blick auf die Karte sofort auffällt.
-                <View
-                  style={[
-                    styles.itemExtrasBadge,
-                    large && styles.itemExtrasBadgeLarge,
-                    item.status === 'fertig' && styles.itemExtrasBadgeDone,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.itemExtrasText,
-                      large && styles.itemExtrasTextLarge,
-                      item.status === 'fertig' && styles.itemExtrasTextDone,
-                    ]}
-                  >
-                    ➕ {item.extras.map((e) => `${e.quantity} ${e.name_hanzi} (${e.name_de})`).join(', ')}
-                  </Text>
-                </View>
-              )}
-              {item.note && (
-                <Text
-                  style={[styles.itemNote, large && styles.itemNoteLarge, item.status === 'fertig' && styles.itemDone]}
-                >
-                  💬 {item.note}
-                </Text>
-              )}
-            </View>
-            <TouchableOpacity
-              onPress={() => onToggleItem(ids, isDone ? 'offen' : 'fertig')}
-              style={[styles.checkButton, large && styles.checkButtonLarge, isDone && styles.checkButtonDone]}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isDone }}
-              accessibilityLabel={isDone ? t('markOpen') : t('markDone')}
-            >
-              <Text style={[styles.checkButtonText, large && styles.checkButtonTextLarge, isDone && styles.checkButtonTextDone]}>
-                ✓
-              </Text>
-            </TouchableOpacity>
-            </View>
-            );
-            })}
-            {allowComplete && openGroupCount > 1 && (
-              // Hakt alle noch offenen Positionen des Tickets auf einmal ab — als breiter
-              // Button unten auf der Karte (vorher ein kleines "×" oben rechts, das eher nach
-              // Löschen/Schließen aussah als nach "alles fertig"). Nur sichtbar, wenn noch
-              // mehr als eine Position offen ist — bei einer einzigen reicht ihr eigener Haken.
-              <TouchableOpacity
-                onPress={() => onCompleteOrder?.(order)}
-                style={[styles.completeAllButton, large && styles.completeAllButtonLarge]}
-                accessibilityLabel={t('markAllDone')}
-              >
-                <Text style={[styles.completeAllButtonText, large && styles.completeAllButtonTextLarge]}>
-                  {completeAllLabel}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        );
-
-        // In der Zwei-Spalten-Kartenansicht (columns=2) braucht der eigentliche Grid-
-        // Slot — egal ob rohe Karte oder Swipeable-Wrapper — flex:1, sonst füllt die Karte
-        // nicht die ihr per columnWrapperStyle zugewiesene Spaltenbreite aus.
-        if (!allowComplete) {
-          return columns > 1 ? <View style={styles.cardInRow}>{card}</View> : card;
-        }
-
-        // Wisch-Geste als zweiter Weg (neben dem X-Button oben), eine ganze Karte auf
-        // einmal abzuhaken — z.B. wenn eine Hand gerade an Töpfen/Tellern beschäftigt
-        // ist und ein Wisch schneller geht als gezielt den kleinen X-Button zu treffen.
-        // renderRightActions zeigt das grüne Aktionsfeld, während nach links gewischt
-        // wird (der Inhalt rutscht dabei nach links, das Feld erscheint von rechts).
-        // onSwipeableOpen löst direkt beim vollständigen Öffnen aus, ohne dass zusätzlich
-        // noch auf das Aktionsfeld getippt werden müsste — ein durchgezogener Wisch reicht.
-        const swipeable = (
-          <Swipeable
-            renderRightActions={() => (
-              <View style={[styles.swipeCompleteAction, large && styles.swipeCompleteActionLarge]}>
-                <Text style={[styles.swipeCompleteActionText, large && styles.swipeCompleteActionTextLarge]}>
-                  {t('swipeDone')}
-                </Text>
-              </View>
-            )}
-            onSwipeableOpen={(direction) => {
-              if (direction === 'right') onCompleteOrder?.(order);
-            }}
-            overshootRight={false}
-            rightThreshold={40}
-          >
-            {card}
-          </Swipeable>
-        );
-
-        return columns > 1 ? <View style={styles.cardInRow}>{swipeable}</View> : swipeable;
-      }}
+      renderItem={({ item: order }) => (
+        <TicketCard
+          t={t}
+          completeAllLabel={completeAllLabel}
+          order={order}
+          large={large}
+          styles={styles}
+          cardBackground={cardBackground}
+          onToggleItem={onToggleItem}
+          onCompleteOrder={onCompleteOrder}
+          allowComplete={allowComplete}
+          inGrid={columns > 1}
+          showFinishedAt={showFinishedAt}
+        />
+      )}
       ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
     />
   );
+}
+
+
+// Eine einzelne Ticket-Karte — aus TicketList herausgelöst, damit die Handy-Ansicht der
+// Küche (PhoneKitchenBoard, SectionList statt Spalten-FlatLists) exakt dieselbe Karte mit
+// demselben Abhak-/Wisch-Verhalten rendern kann.
+function TicketCard({
+  t,
+  completeAllLabel,
+  order,
+  large,
+  styles,
+  cardBackground,
+  onToggleItem,
+  onCompleteOrder,
+  allowComplete = false,
+  inGrid = false,
+  showFinishedAt = false,
+}: {
+  t: BoardT;
+  completeAllLabel: string;
+  order: GroupedOrder;
+  large: boolean;
+  styles: BoardStyles;
+  cardBackground: Record<OrderProgress, object>;
+  onToggleItem: (itemIds: string[], status: OrderItemStatus) => void;
+  onCompleteOrder?: (order: GroupedOrder) => void;
+  allowComplete?: boolean;
+  // true im Zwei-Spalten-Kartenraster (columns > 1 in TicketList).
+  inGrid?: boolean;
+  showFinishedAt?: boolean;
+}) {
+  const finishedAtMs = showFinishedAt ? latestDoneAt(order) : 0;
+  const doneCount = order.items.filter((item) => item.status === 'fertig').length;
+  const itemGroups = groupItems(order.items);
+  const openGroupCount = itemGroups.filter((group) => group.item.status === 'offen').length;
+  const card = (
+    <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
+      <View style={styles.cardHeader}>
+        <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>{t('table', { n: order.table.number })}</Text>
+        <View style={styles.cardHeaderRight}>
+          <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>
+            {showFinishedAt && finishedAtMs > 0
+              ? t('finishedAt', { time: formatTime(new Date(finishedAtMs).toISOString()) })
+              : formatTime(order.createdAt)}
+          </Text>
+          {order.items.length > 1 && (
+            // Fortschritt des Tickets auf einen Blick ("2/3 erledigt"), da abgehakte
+            // Positionen jetzt auf dem Ticket stehen bleiben statt zu verschwinden.
+            <View style={[styles.progressPill, large && styles.progressPillLarge]}>
+              <Text style={[styles.progressPillText, large && styles.progressPillTextLarge]}>
+                ✓ {doneCount}/{order.items.length}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+      {itemGroups.map(({ key, item, ids }) => {
+      const isDone = item.status === 'fertig';
+      // Menge ("3×") direkt vor dem Gerichtenamen, auch bei 1× — steht so immer an
+      // derselben Stelle. Ab 2× in Akzentfarbe, damit Mehrfach-Portionen auffallen.
+      // Inline statt als eigene Spalte, damit schmale Küchenkarten nicht Breite verlieren.
+      const qtyPrefix = (
+        <Text style={[styles.qtyText, ids.length > 1 && styles.qtyTextMulti, isDone && styles.qtyTextDone]}>
+          {ids.length}×{' '}
+        </Text>
+      );
+      return (
+      // Jede Position hat rechts einen eigenen, großen Haken-Button — abgehakt wird NUR
+      // über ihn, nicht mehr über die ganze Zeile, damit ein flüchtiges Antippen der
+      // Karte (z.B. beim Scrollen) nicht aus Versehen die falsche Position abhakt.
+      // Abgehakte Positionen bleiben auf dem Ticket stehen (grüner Haken, grau/
+      // durchgestrichen); erneutes Antippen des Hakens macht das rückgängig.
+      <View key={key} style={[styles.itemRow, large && styles.itemRowLarge]}>
+      <View style={[styles.itemText, isDone && styles.itemTextDone]}>
+        {item.menu_item.name_hanzi ? (
+          <>
+            <Text
+              style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
+            >
+              {qtyPrefix}
+              {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
+              {item.menu_item.name_hanzi}
+              {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
+            </Text>
+            <Text style={[styles.itemDe, large && styles.itemDeLarge, item.status === 'fertig' && styles.itemDone]}>
+              {item.menu_item.name_de}
+              {item.variant_de ? ` · ${item.variant_de}` : ''}
+            </Text>
+          </>
+        ) : (
+          // Bar-Items haben kein Hanzi (an der Bar wird auf Deutsch gearbeitet) —
+          // deutschen Namen dann in der großen/fetten Zeile zeigen statt einer leeren
+          // Hanzi-Zeile über einem winzigen deutschen Namen darunter.
+          <Text
+            style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
+          >
+            {qtyPrefix}
+            {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
+            {item.menu_item.name_de}
+            {item.variant_de ? ` · ${item.variant_de}` : ''}
+          </Text>
+        )}
+        {item.extras && item.extras.length > 0 && (
+          // Eigene auffällige Sprechblase statt nur kursivem Text — Extras (z.B.
+          // Ajitama-Ei/Mais bei Ramen) wurden von der Küche regelmäßig übersehen, wenn
+          // sie nur als kleine Textzeile zwischen Gericht und Notiz stand. Fester
+          // Amber-Ton (nicht colors.warning) + Icon, damit sie unabhängig von Hell-/
+          // Dunkelmodus und auch beim flüchtigen Blick auf die Karte sofort auffällt.
+          <View
+            style={[
+              styles.itemExtrasBadge,
+              large && styles.itemExtrasBadgeLarge,
+              item.status === 'fertig' && styles.itemExtrasBadgeDone,
+            ]}
+          >
+            <Text
+              style={[
+                styles.itemExtrasText,
+                large && styles.itemExtrasTextLarge,
+                item.status === 'fertig' && styles.itemExtrasTextDone,
+              ]}
+            >
+              ➕ {item.extras.map((e) => `${e.quantity} ${e.name_hanzi} (${e.name_de})`).join(', ')}
+            </Text>
+          </View>
+        )}
+        {item.note && (
+          <Text
+            style={[styles.itemNote, large && styles.itemNoteLarge, item.status === 'fertig' && styles.itemDone]}
+          >
+            💬 {item.note}
+          </Text>
+        )}
+      </View>
+      <TouchableOpacity
+        onPress={() => onToggleItem(ids, isDone ? 'offen' : 'fertig')}
+        style={[styles.checkButton, large && styles.checkButtonLarge, isDone && styles.checkButtonDone]}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: isDone }}
+        accessibilityLabel={isDone ? t('markOpen') : t('markDone')}
+      >
+        <Text style={[styles.checkButtonText, large && styles.checkButtonTextLarge, isDone && styles.checkButtonTextDone]}>
+          ✓
+        </Text>
+      </TouchableOpacity>
+      </View>
+      );
+      })}
+      {allowComplete && openGroupCount > 1 && (
+        // Hakt alle noch offenen Positionen des Tickets auf einmal ab — als breiter
+        // Button unten auf der Karte (vorher ein kleines "×" oben rechts, das eher nach
+        // Löschen/Schließen aussah als nach "alles fertig"). Nur sichtbar, wenn noch
+        // mehr als eine Position offen ist — bei einer einzigen reicht ihr eigener Haken.
+        <TouchableOpacity
+          onPress={() => onCompleteOrder?.(order)}
+          style={[styles.completeAllButton, large && styles.completeAllButtonLarge]}
+          accessibilityLabel={t('markAllDone')}
+        >
+          <Text style={[styles.completeAllButtonText, large && styles.completeAllButtonTextLarge]}>
+            {completeAllLabel}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  // In der Zwei-Spalten-Kartenansicht (columns=2) braucht der eigentliche Grid-
+  // Slot — egal ob rohe Karte oder Swipeable-Wrapper — flex:1, sonst füllt die Karte
+  // nicht die ihr per columnWrapperStyle zugewiesene Spaltenbreite aus.
+  if (!allowComplete) {
+    return inGrid ? <View style={styles.cardInRow}>{card}</View> : card;
+  }
+
+  // Wisch-Geste als zweiter Weg (neben dem X-Button oben), eine ganze Karte auf
+  // einmal abzuhaken — z.B. wenn eine Hand gerade an Töpfen/Tellern beschäftigt
+  // ist und ein Wisch schneller geht als gezielt den kleinen X-Button zu treffen.
+  // renderRightActions zeigt das grüne Aktionsfeld, während nach links gewischt
+  // wird (der Inhalt rutscht dabei nach links, das Feld erscheint von rechts).
+  // onSwipeableOpen löst direkt beim vollständigen Öffnen aus, ohne dass zusätzlich
+  // noch auf das Aktionsfeld getippt werden müsste — ein durchgezogener Wisch reicht.
+  const swipeable = (
+    <Swipeable
+      renderRightActions={() => (
+        <View style={[styles.swipeCompleteAction, large && styles.swipeCompleteActionLarge]}>
+          <Text style={[styles.swipeCompleteActionText, large && styles.swipeCompleteActionTextLarge]}>
+            {t('swipeDone')}
+          </Text>
+        </View>
+      )}
+      onSwipeableOpen={(direction) => {
+        if (direction === 'right') onCompleteOrder?.(order);
+      }}
+      overshootRight={false}
+      rightThreshold={40}
+    >
+      {card}
+    </Swipeable>
+  );
+
+  return inGrid ? <View style={styles.cardInRow}>{swipeable}</View> : swipeable;
 }
 
 const createStyles = (colors: ThemeColors) =>
@@ -1406,3 +1734,69 @@ const createStyles = (colors: ThemeColors) =>
     countCardVariant: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
     countCardVariantLarge: { fontSize: 18, marginTop: 4 },
   });
+
+// Handy-Variante der Board-Styles (siehe PhoneKitchenBoard): alle Basis-Styles plus
+// Überschreibungen für eine einspaltige Ansicht auf ~360–430px Breite — etwas größere
+// Schrift/Haken als die kompakte Tablet-Größe (eine Karte hat jetzt die volle Breite),
+// schlankere Kopfzeile, Banner untereinander statt nebeneinander, Stationen-Leiste.
+const createPhoneStyles = (colors: ThemeColors) => {
+  const base = createStyles(colors);
+  return StyleSheet.create({
+    ...base,
+    tab: { flex: 1, paddingVertical: 10, alignItems: 'center' },
+    tabTextHanzi: { ...base.tabTextHanzi, fontSize: 17 },
+    tabTextDe: { ...base.tabTextDe, fontSize: 11 },
+    bellButton: { paddingHorizontal: 12, paddingVertical: 8 },
+    phoneStationBar: {
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    phoneStationChip: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 6,
+      paddingHorizontal: 2,
+      borderRadius: 10,
+      backgroundColor: colors.surfaceAlt,
+    },
+    phoneStationChipActive: { backgroundColor: colors.accent },
+    phoneStationChipLabel: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+    phoneStationChipLabelActive: { color: colors.onAccent },
+    phoneStationChipCount: { fontSize: 18, fontWeight: '800', color: colors.textFaint, marginTop: 1 },
+    phoneStationChipCountHot: { color: colors.accent },
+    phoneStationChipCountActive: { color: colors.onAccent },
+    // Fixierte Abschnitts-Überschrift in "全部" — braucht einen Hintergrund, sonst scrollen
+    // die Karten sichtbar darunter durch.
+    stationHeader: {
+      ...base.stationHeader,
+      backgroundColor: colors.background,
+      paddingHorizontal: 4,
+      paddingTop: 10,
+      paddingBottom: 8,
+    },
+    stationHeaderText: { ...base.stationHeaderText, fontSize: 17 },
+    stationHeaderCount: { ...base.stationHeaderCount, fontSize: 13 },
+    listContent: { paddingHorizontal: 10, paddingTop: 4, paddingBottom: 32 },
+    card: { ...base.card, padding: 12, marginBottom: 10 },
+    swipeCompleteAction: { ...base.swipeCompleteAction, marginBottom: 10 },
+    tableLabel: { ...base.tableLabel, fontSize: 22 },
+    timeLabel: { ...base.timeLabel, fontSize: 14 },
+    itemRow: { ...base.itemRow, paddingVertical: 10 },
+    itemHanzi: { ...base.itemHanzi, fontSize: 20 },
+    itemDe: { ...base.itemDe, fontSize: 14 },
+    itemExtrasText: { ...base.itemExtrasText, fontSize: 15 },
+    itemNote: { ...base.itemNote, fontSize: 14 },
+    checkButton: { ...base.checkButton, width: 46, height: 46, borderRadius: 23 },
+    checkButtonText: { ...base.checkButtonText, fontSize: 22, lineHeight: 26 },
+    completeAllButton: { ...base.completeAllButton, paddingVertical: 12 },
+    completeAllButtonText: { ...base.completeAllButtonText, fontSize: 15 },
+    countCard: { ...base.countCard, marginBottom: 10 },
+    emptyBanner: { ...base.emptyBanner, flexDirection: 'column', gap: 16, paddingHorizontal: 16 },
+    emptyBannerText: { ...base.emptyBannerText, flex: 0, fontSize: 28, textAlign: 'center' },
+    emptyBannerImage: { width: 200, aspectRatio: 3 / 4 },
+  });
+};

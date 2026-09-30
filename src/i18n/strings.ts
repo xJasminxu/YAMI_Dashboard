@@ -98,6 +98,7 @@ export const STRINGS = {
   extras: { de: "✨ Extras", zh: "✨ 加料" },
   // Küche/Bar-Tickets (Bar nutzt immer die deutsche Fassung)
   ordersLoadError: { de: "Bestellungen konnten nicht geladen werden: {error}", zh: "订单加载失败：{error}" },
+  stationAll: { de: "Alle", zh: "全部" },
   stationVorspeise: { de: "Vorspeise", zh: "小吃" },
   stationHauptspeise: { de: "Hauptspeise", zh: "主食" },
   stationBarbecue: { de: "Barbecue", zh: "烤肉" },
@@ -107,6 +108,8 @@ export const STRINGS = {
   emptyDoneVorspeise: { de: "Noch keine fertigen Vorspeisen-Tickets.", zh: "还没有完成的小吃订单。" },
   emptyDoneHauptspeise: { de: "Noch keine fertigen Hauptspeisen-Tickets.", zh: "还没有完成的主食订单。" },
   emptyDoneBarbecue: { de: "Noch keine fertigen Barbecue-Tickets.", zh: "还没有完成的烤肉订单。" },
+  emptyOpenAll: { de: "Nichts offen.", zh: "没有待做的。" },
+  emptyDoneAll: { de: "Noch keine fertigen Tickets.", zh: "还没有完成的订单。" },
   suffixOpen: { de: "offen", zh: "待做" },
   suffixDone: { de: "fertig", zh: "完成" },
   finishedAt: { de: "Fertig {time}", zh: "完成 {time}" },

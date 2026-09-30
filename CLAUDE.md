@@ -71,6 +71,16 @@ Rolle des Geräts:
    Gyoza-Bestellungen gleichzeitig) direkt in einem Rutsch nachbraten kann, ohne selbst über
    die Ticket-Karten zu zählen. Abgehakt wird weiterhin nur über die Ticket-Karten im
    "Offen"-Tab, der "Anzahl"-Tab selbst ist reine Zähl-Hilfe ohne Tipp-Interaktion.
+   **Handy-Ansicht der Küche:** Auf einem Handy (kürzeste Bildschirmseite < 600dp,
+   `hooks/useIsPhone.ts`, gilt also auch im Querformat) rendert `DeviceTicketBoard` statt
+   der drei Spalten nebeneinander `PhoneKitchenBoard`: kompakte Tab-Leiste (待做/已完成/数量,
+   nur Glocke, keine "−"/"+"-Kartengröße), darunter eine Stationen-Leiste als Filter
+   (全部 | 小吃 | 主食 | 烤肉 mit Zähler je Station, zuletzt gewählte Station pro Gerät
+   gemerkt, AsyncStorage `yami:phone-kitchen-station`) und EINE Spalte volle Breite. "全部"
+   zeigt alle Stationen untereinander mit fixierten Abschnitts-Überschriften (leere
+   Stationen ausgeblendet). Karten sind dieselben wie auf dem Tablet (`TicketCard`, gleiches
+   Abhaken/Wischen/"全部完成"), nur mit eigenen Größen (`createPhoneStyles`). Tablet/Laptop
+   und die Bar sind davon nicht betroffen.
 3. **Bar** — zeigt nur Items mit `target_device = 'bar'`. Statt eines umschaltbaren
    "Fertig"-Tabs stehen hier immer drei Spalten nebeneinander: Getränke | Nachspeisen |
    Vergangene Bestellungen (siehe `categories.menu_group`), aus demselben
