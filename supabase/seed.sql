@@ -470,3 +470,44 @@ insert into menu_items (category_id, name_hanzi, name_de, is_custom_entry) value
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   is_custom_entry = excluded.is_custom_entry;
+
+-- Migration: Schärfe-Varianten entfernen. Varianten wie "Rind scharf" / "Rind nicht scharf" /
+-- "Huhn scharf" / "Huhn nicht scharf" (direkt in der Datenbank angelegt) doppeln den
+-- Schärfegrad, der nur noch über die Leiste Mild | Scharf | Sehr scharf in der
+-- Bestellübersicht eingestellt wird (lib/spice.ts, order_items.spice_level). Entfernt
+-- Schärfe-Wörter aus den Variantennamen und fasst die Duplikate zusammen (Reihenfolge
+-- und Preis der ersten Variante je Grundname bleiben). Bleibt keine Variante übrig
+-- (reine "scharf / nicht scharf"-Auswahl), wird variant_options null. Idempotent.
+update menu_items mi
+set variant_options = sub.new_variants
+from (
+  select m.id,
+    (select jsonb_agg(y.v order by y.ord)
+       from (
+         select distinct on (x.base_de)
+           (x.e - 'name_de' - 'name_hanzi')
+             || jsonb_build_object('name_de', x.base_de,
+                                   'name_hanzi', coalesce(nullif(x.base_hanzi, ''), x.base_de)) as v,
+           x.ord
+         from (
+           select t.e, t.ord,
+             btrim(regexp_replace(t.e->>'name_de',
+               '[[:space:],/(–-]*((nicht|sehr|leicht|extra|not|very)[[:space:]]+)?(scharf|spicy|mild)[)]?',
+               '', 'gi'), E' \t,/-') as base_de,
+             btrim(regexp_replace(coalesce(t.e->>'name_hanzi', ''),
+               '[[:space:],/(（-]*(不|微|中|特|超)?辣[)）]?',
+               '', 'g'), E' \t,/-') as base_hanzi
+           from jsonb_array_elements(m.variant_options) with ordinality as t(e, ord)
+         ) x
+         where x.base_de <> ''
+         order by x.base_de, x.ord
+       ) y
+    ) as new_variants
+  from menu_items m
+  where m.variant_options is not null
+    and exists (
+      select 1 from jsonb_array_elements(m.variant_options) as v(e)
+      where v.e->>'name_de' ~* '(scharf|spicy|mild)' or coalesce(v.e->>'name_hanzi', '') ~ '辣'
+    )
+) sub
+where mi.id = sub.id;

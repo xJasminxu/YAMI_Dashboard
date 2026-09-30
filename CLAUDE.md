@@ -335,6 +335,8 @@ jeder Hauptspeisen-Zeile (`kitchen_station = 'hauptspeise'`, ohne "Diverses", `l
 Erneutes Antippen des gewählten Grads setzt zurück auf nicht scharf. Der Grad ist Teil des
 Warenkorb-Schlüssels (unterschiedlich scharfe Portionen = getrennte Zeilen). Auf den
 Küchen-Tickets steht er hinter dem Gerichtenamen ("豚骨拉面 · 🌶️🌶️ 辣").
+Schärfe gehört deshalb NICHT in `variant_options` (keine Varianten wie "Rind scharf" /
+"Rind nicht scharf"); die Migration am Ende von `supabase/seed.sql` entfernt solche Varianten.
 
 Modifier-Konzept (Varianten + Extras): manche `menu_items` verlangen beim Bestellen eine
 Dialog-Auswahl statt direkt in den Warenkorb zu wandern. `variant_options` ist eine Pflicht-
