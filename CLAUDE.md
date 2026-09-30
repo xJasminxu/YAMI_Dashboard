@@ -332,7 +332,8 @@ Siehe `supabase/schema.sql` für die vollständige Definition. Kurzfassung:
 Schärfegrad: einstellbar NUR in der aufklappbaren Bestellübersicht (Warenkorb-Panel in
 `OrderScreen.tsx`), per dreiteiliger Leiste Mild | Scharf | Sehr scharf (微辣/辣/特辣) unter
 jeder Hauptspeisen-Zeile (`kitchen_station = 'hauptspeise'`, ohne "Diverses", `lib/spice.ts`).
-Erneutes Antippen des gewählten Grads setzt zurück auf nicht scharf. Der Grad ist Teil des
+Erneutes Antippen des gewählten Grads setzt zurück auf nicht scharf. In der Gerichtauswahl (Varianten-/Extras-Dialog) gibt es bewusst keine Schärfe-Option
+(das frühere Ramen-Extra "辣油 Chilliöl" wurde entfernt, siehe Migration in schema.sql). Der Grad ist Teil des
 Warenkorb-Schlüssels (unterschiedlich scharfe Portionen = getrennte Zeilen). Auf den
 Küchen-Tickets steht er hinter dem Gerichtenamen ("豚骨拉面 · 🌶️🌶️ 辣").
 
