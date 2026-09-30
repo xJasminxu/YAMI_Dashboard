@@ -327,7 +327,14 @@ Siehe `supabase/schema.sql` für die vollständige Definition. Kurzfassung:
 - `order_items` — order_id, menu_item_id, status (offen/fertig), variant_hanzi/variant_de
   (gewählte Variante), extras (gewählte Extras + Menge + Preis), unit_price (Preis-Snapshot
   der Grundposition zum Bestellzeitpunkt, siehe unten), note (Freitext der Bedienung),
-  created_at, done_at
+  spice_level (1 mild / 2 scharf / 3 sehr scharf, null = nicht scharf), created_at, done_at
+
+Schärfegrad: einstellbar NUR in der aufklappbaren Bestellübersicht (Warenkorb-Panel in
+`OrderScreen.tsx`), per dreiteiliger Leiste Mild | Scharf | Sehr scharf (微辣/辣/特辣) unter
+jeder Hauptspeisen-Zeile (`kitchen_station = 'hauptspeise'`, ohne "Diverses", `lib/spice.ts`).
+Erneutes Antippen des gewählten Grads setzt zurück auf nicht scharf. Der Grad ist Teil des
+Warenkorb-Schlüssels (unterschiedlich scharfe Portionen = getrennte Zeilen). Auf den
+Küchen-Tickets steht er hinter dem Gerichtenamen ("豚骨拉面 · 🌶️🌶️ 辣").
 
 Modifier-Konzept (Varianten + Extras): manche `menu_items` verlangen beim Bestellen eine
 Dialog-Auswahl statt direkt in den Warenkorb zu wandern. `variant_options` ist eine Pflicht-

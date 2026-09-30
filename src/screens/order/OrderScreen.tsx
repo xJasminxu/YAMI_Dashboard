@@ -25,6 +25,7 @@ import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
 import { translate, useI18n, type Language } from '../../i18n/LanguageContext';
 import { categoryEmoji, MENU_GROUP_EMOJIS, titleCase } from '../../lib/emoji';
+import { SPICE_LABELS, SPICE_LEVELS, supportsSpiceLevel } from '../../lib/spice';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Order'>;
 
@@ -63,6 +64,8 @@ interface CartLine {
   unitPrice: number | null; // Preis für eine Portion Grundgericht/-getränk (inkl. Variante, exkl. Extras)
   extras: CartExtra[];
   note: string;
+  // 0 = nicht scharf, 1-3 = mild/scharf/sehr scharf (nur Hauptspeisen, siehe lib/spice.ts)
+  spiceLevel: number;
   quantity: number;
 }
 
@@ -73,8 +76,10 @@ function extrasSignature(extras: CartExtra[]) {
     .join('|');
 }
 
-function cartKeyFor(menuItemId: string, variantDe: string | null, extras: CartExtra[]) {
-  return `${menuItemId}::${variantDe ?? ''}::${extrasSignature(extras)}`;
+// Schärfegrad gehört mit zum Schlüssel: "2× Ramen scharf + 1× Ramen mild" sind zwei
+// Zeilen, weil die Küche sie unterschiedlich zubereitet.
+function cartKeyFor(menuItemId: string, variantDe: string | null, extras: CartExtra[], spiceLevel = 0) {
+  return `${menuItemId}::${variantDe ?? ''}::${extrasSignature(extras)}::${spiceLevel}`;
 }
 
 // Bearbeitbar (Variante/Extras/Beschreibung nachträglich ändern, siehe handleEditCartLine)
@@ -92,6 +97,9 @@ function lineUnitTotal(line: Pick<CartLine, 'unitPrice' | 'extras'>): number | n
   if (line.unitPrice === null && line.extras.every((e) => e.price === null)) return null;
   return (line.unitPrice ?? 0) + extrasSum;
 }
+
+// Feste Farben der Schärfe-Leiste (unabhängig von Hell/Dunkel): Gelb → Orange → Rot.
+const SPICE_COLORS: Record<number, string> = { 1: '#F59F00', 2: '#E8590C', 3: '#C92A2A' };
 
 function formatPrice(amount: number) {
   return `${amount.toFixed(2).replace('.', ',')} €`;
@@ -274,6 +282,15 @@ export default function OrderScreen({ route }: Props) {
     return map;
   }, [categories]);
 
+  // Gerichte, bei denen in der Bestellübersicht ein Schärfegrad einstellbar ist (Hauptspeisen).
+  const spiceableItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const category of categories) {
+      for (const item of category.items) if (supportsSpiceLevel(item, category)) ids.add(item.id);
+    }
+    return ids;
+  }, [categories]);
+
   // Die gerade zum Bearbeiten geöffnete Warenkorb-Zeile (siehe editingCartKey) — liefert
   // die aktuelle Variante/Extras/Beschreibung, mit der die Dialoge unten vorausgefüllt
   // werden, statt leer zu starten.
@@ -309,6 +326,7 @@ export default function OrderScreen({ route }: Props) {
           unitPrice,
           extras,
           note: '',
+          spiceLevel: 0,
           quantity: 1,
         },
       ];
@@ -328,7 +346,7 @@ export default function OrderScreen({ route }: Props) {
       if (!line) return prev;
 
       const unitPrice = variant?.price ?? item.price ?? null;
-      const newCartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras);
+      const newCartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras, line.spiceLevel);
 
       if (newCartKey === cartKey) {
         return prev.map((l) =>
@@ -350,6 +368,24 @@ export default function OrderScreen({ route }: Props) {
           ? { ...l, cartKey: newCartKey, variantHanzi: variant?.name_hanzi ?? null, variantDe: variant?.name_de ?? null, unitPrice, extras }
           : l
       );
+    });
+  }
+
+  // Wie updateCartLine: der neue Schärfegrad ändert den cartKey — trifft er dabei eine
+  // bereits existierende Zeile (gleiches Gericht mit diesem Schärfegrad), werden die
+  // Mengen zusammengeführt.
+  function setSpiceLevel(cartKey: string, spiceLevel: number) {
+    setCart((prev) => {
+      const line = prev.find((l) => l.cartKey === cartKey);
+      if (!line || line.spiceLevel === spiceLevel) return prev;
+      const newCartKey = cartKeyFor(line.menuItemId, line.variantDe, line.extras, spiceLevel);
+      const collision = prev.find((l) => l.cartKey === newCartKey);
+      if (collision) {
+        return prev
+          .filter((l) => l.cartKey !== cartKey)
+          .map((l) => (l.cartKey === newCartKey ? { ...l, quantity: l.quantity + line.quantity } : l));
+      }
+      return prev.map((l) => (l.cartKey === cartKey ? { ...l, cartKey: newCartKey, spiceLevel } : l));
     });
   }
 
@@ -486,6 +522,7 @@ export default function OrderScreen({ route }: Props) {
             : null,
         unit_price: line.unitPrice,
         note: line.note.trim() ? line.note.trim() : null,
+        spice_level: line.spiceLevel > 0 ? line.spiceLevel : null,
       }));
     });
 
@@ -694,6 +731,36 @@ export default function OrderScreen({ route }: Props) {
                             <Text style={styles.cartLinePrice}>
                               {formatPrice(lineUnitTotal(line)! * line.quantity)}
                             </Text>
+                          )}
+                          {spiceableItemIds.has(line.menuItemId) && (
+                            // Schärfe-Leiste: Segmente bis zum gewählten Grad sind gefüllt.
+                            // Antippen des bereits gewählten Grads setzt zurück auf nicht scharf.
+                            <View style={styles.spiceBarRow}>
+                              <Text style={styles.spiceBarIcon}>🌶️</Text>
+                              <View style={styles.spiceBar}>
+                                {SPICE_LEVELS.map((level) => {
+                                  const filled = level <= line.spiceLevel;
+                                  return (
+                                    <TouchableOpacity
+                                      key={level}
+                                      style={[
+                                        styles.spiceSegment,
+                                        level > 1 && styles.spiceSegmentDivider,
+                                        filled && { backgroundColor: SPICE_COLORS[level] },
+                                      ]}
+                                      onPress={() => setSpiceLevel(line.cartKey, line.spiceLevel === level ? 0 : level)}
+                                      accessibilityRole="adjustable"
+                                      accessibilityState={{ selected: line.spiceLevel === level }}
+                                      accessibilityLabel={SPICE_LABELS[level][lang]}
+                                    >
+                                      <Text style={[styles.spiceSegmentText, filled && styles.spiceSegmentTextFilled]}>
+                                        {SPICE_LABELS[level][lang]}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </View>
+                            </View>
                           )}
                           <TouchableOpacity style={styles.noteField} onPress={() => setNoteEditLine(line)}>
                             <Text
@@ -1499,6 +1566,21 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: 4,
     },
     noteFieldText: { fontSize: 13, color: colors.text },
+    // Schärfe-Leiste einer Warenkorb-Zeile (nur Hauptspeisen, siehe spiceableItemIds).
+    spiceBarRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+    spiceBarIcon: { fontSize: 15, marginRight: 6 },
+    spiceBar: {
+      flex: 1,
+      flexDirection: 'row',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      overflow: 'hidden',
+    },
+    spiceSegment: { flex: 1, paddingVertical: 6, alignItems: 'center', justifyContent: 'center' },
+    spiceSegmentDivider: { borderLeftWidth: 1, borderLeftColor: colors.border },
+    spiceSegmentText: { fontSize: 12, color: colors.textSecondary },
+    spiceSegmentTextFilled: { color: '#fff', fontWeight: '700' },
     noteFieldPlaceholder: { fontSize: 13, color: colors.textFaint },
     // Stift-Button zum nachträglichen Ändern von Variante/Extras/Beschreibung einer
     // Warenkorb-Zeile (siehe handleEditCartLine) — nur sichtbar bei Items, die überhaupt

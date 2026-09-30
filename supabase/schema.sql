@@ -181,6 +181,12 @@ create index if not exists order_items_status_idx on order_items(status);
 alter table order_items add column if not exists paid_method text
   check (paid_method in ('karte', 'bargeld'));
 
+-- Migration: spice_level-Spalte (nachträglich hinzugefügt). Schärfegrad 1 = mild,
+-- 2 = scharf, 3 = sehr scharf, den die Bedienung in der aufklappbaren Bestellübersicht
+-- (Warenkorb, OrderScreen.tsx) bei Hauptspeisen einstellt. null = nicht scharf.
+alter table order_items add column if not exists spice_level smallint
+  check (spice_level between 1 and 3);
+
 -- ---------------------------------------------------------------------------
 -- Realtime: order_items und orders für Live-Updates auf Küche/Bar aktivieren.
 -- (In Supabase: Database → Replication → Tabellen zur "supabase_realtime"
