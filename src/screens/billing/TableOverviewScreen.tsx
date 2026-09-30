@@ -18,11 +18,13 @@ import { formatDateTime } from '../../lib/datetime';
 import { itemTotal, formatPrice } from '../../lib/pricing';
 import { logActivity } from '../../lib/activityLog';
 import DiscountDialog from '../../components/DiscountDialog';
+import { Feather } from '@expo/vector-icons';
 import { useI18n } from '../../i18n/LanguageContext';
 import { supabase } from '../../lib/supabase';
 import type { RootStackParamList } from '../../navigation/types';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
+import { useTheme } from '../../theme/ThemeContext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TableOverview'>;
 type OverviewStyles = ReturnType<typeof createStyles>;
@@ -64,6 +66,7 @@ interface TableRow {
 // includeClosed:true holt beide Gruppen über denselben Hook.
 export default function TableOverviewScreen({ navigation }: Props) {
   const { t } = useI18n();
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const kitchen = useDeviceOrders('kitchen', { includeClosed: true });
   const bar = useDeviceOrders('bar', { includeClosed: true });
@@ -447,9 +450,11 @@ export default function TableOverviewScreen({ navigation }: Props) {
                       >
                         <Text style={styles.occupiedTileNumber}>{row.tableNumber}</Text>
                         <Text style={styles.occupiedTileMeta}>
-                          {allDone ? '✅' : '⏳'} {row.done}/{row.total}
+                          {row.done}/{row.total}
                         </Text>
-                        {row.note && <Text style={styles.occupiedTileNote}>📝</Text>}
+                        {row.note && (
+                          <Feather name="file-text" size={11} color={colors.textMuted} style={styles.occupiedTileNote} />
+                        )}
                       </TouchableOpacity>
                     );
                   })}
@@ -510,7 +515,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
       <Modal visible={moveTableSource !== null} transparent animationType="fade" onRequestClose={closeMoveDialogs}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalEmoji}>🔀</Text>
+            <Feather name="shuffle" size={28} color={colors.textMuted} style={styles.modalIcon} />
             <Text style={styles.modalTitle}>{t('moveTableTitle', { n: moveTableSource?.tableNumber ?? '' })}</Text>
             <Text style={styles.modalBody}>{t('moveTableBody')}</Text>
             {moveTableSource && (
@@ -550,7 +555,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
       <Modal visible={moveItemsSource !== null} transparent animationType="fade" onRequestClose={closeMoveDialogs}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.modalCard, styles.modalCardTall]}>
-            <Text style={styles.modalEmoji}>✂️</Text>
+            <Feather name="scissors" size={28} color={colors.textMuted} style={styles.modalIcon} />
             <Text style={styles.modalTitle}>{t('moveItemsTitle', { n: moveItemsSource?.tableNumber ?? '' })}</Text>
             <Text style={styles.modalStep}>{t('stepPickItems')}</Text>
             <ScrollView style={styles.moveItemsList}>
@@ -625,7 +630,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
       <Modal visible={deleteTarget !== null} transparent animationType="fade" onRequestClose={cancelDeleteTable}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalEmoji}>🗑️</Text>
+            <Feather name="trash-2" size={28} color={colors.danger} style={styles.modalIcon} />
             <Text style={styles.modalTitle}>{t('deleteTableTitle', { n: deleteTarget?.row.tableNumber ?? '' })}</Text>
             <Text style={styles.modalBody}>
               {deleteTarget?.past ? t('deleteTableBodyPast') : t('deleteTableBodyOpen')}
@@ -676,6 +681,7 @@ function TargetTablePicker({
   styles: OverviewStyles;
 }) {
   const { t } = useI18n();
+  const { colors } = useTheme();
   const others = openTables.filter((row) => row.tableNumber !== sourceNumber);
   return (
     <View style={styles.targetPicker}>
@@ -689,7 +695,10 @@ function TargetTablePicker({
                 style={[styles.targetChip, active && styles.targetChipActive]}
                 onPress={() => onChange(String(row.tableNumber))}
               >
-                <Text style={[styles.targetChipText, active && styles.targetChipTextActive]}>🔗 {row.tableNumber}</Text>
+                <View style={styles.targetChipInner}>
+                  <Feather name="link" size={14} color={active ? colors.accent : colors.textMuted} />
+                  <Text style={[styles.targetChipText, active && styles.targetChipTextActive]}>{row.tableNumber}</Text>
+                </View>
               </TouchableOpacity>
             );
           })}
@@ -708,7 +717,10 @@ function TargetTablePicker({
   );
 }
 
-// Runder Icon-Button der Tischkarte — Icon statt Text, Beschriftung nur für Screenreader.
+type FeatherName = React.ComponentProps<typeof Feather>['name'];
+
+// Runder Icon-Button der Tischkarte — dezentes Feather-Linien-Icon (früher Emojis, die
+// wirkten zu bunt/unruhig) statt Text, Beschriftung nur für Screenreader.
 function IconButton({
   icon,
   label,
@@ -716,12 +728,13 @@ function IconButton({
   danger = false,
   styles,
 }: {
-  icon: string;
+  icon: FeatherName;
   label: string;
   onPress: () => void;
   danger?: boolean;
   styles: OverviewStyles;
 }) {
+  const { colors } = useTheme();
   return (
     <TouchableOpacity
       style={[styles.iconButton, danger && styles.iconButtonDanger]}
@@ -730,7 +743,7 @@ function IconButton({
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <Text style={styles.iconButtonText}>{icon}</Text>
+      <Feather name={icon} size={20} color={danger ? colors.danger : colors.textSecondary} />
     </TouchableOpacity>
   );
 }
@@ -763,22 +776,28 @@ function TableCard({
   styles: OverviewStyles;
 }) {
   const { t } = useI18n();
+  const { colors } = useTheme();
   return (
     <View style={[styles.card, past && styles.cardPast]}>
       <TouchableOpacity style={styles.cardMain} onPress={onPress}>
         <View style={styles.cardLeft}>
           <View style={styles.tableLabelRow}>
-            <Text style={styles.tableLabel}>🪑 {t('table', { n: row.tableNumber })}</Text>
+            <Text style={styles.tableLabel}>{t('table', { n: row.tableNumber })}</Text>
             {/* Reiner Hinweis, dass eine Notiz existiert — bearbeitet wird sie ausschließlich
                 in TableBillingScreen.tsx (Checkout). */}
-            {row.note && <Text style={styles.noteIndicator}>📝</Text>}
+            {row.note && <Feather name="file-text" size={14} color={colors.textMuted} />}
           </View>
           {past && row.closedAt && (
             <Text style={styles.closedAtText}>{t('closedAt', { time: formatDateTime(row.closedAt) })}</Text>
           )}
-          <Text style={styles.progressText}>
-            {row.total > 0 && row.done === row.total ? '✅' : '⏳'} {t('doneOfTotal', { done: row.done, total: row.total })}
-          </Text>
+          <View style={styles.progressRow}>
+            {row.total > 0 && row.done === row.total ? (
+              <Feather name="check-circle" size={13} color={colors.success} />
+            ) : (
+              <Feather name="clock" size={13} color={colors.textMuted} />
+            )}
+            <Text style={styles.progressText}>{t('doneOfTotal', { done: row.done, total: row.total })}</Text>
+          </View>
         </View>
         <View style={styles.cardRight}>
           <Text style={styles.cardSumText}>
@@ -789,16 +808,16 @@ function TableCard({
         </View>
       </TouchableOpacity>
       <View style={styles.cardActions}>
-        <IconButton icon="➕" label={t('a11yNewOrder')} onPress={onNewOrder} styles={styles} />
+        <IconButton icon="plus" label={t('a11yNewOrder')} onPress={onNewOrder} styles={styles} />
         {onMoveTable && (
-          <IconButton icon="🔀" label={t('a11yMoveTable')} onPress={onMoveTable} styles={styles} />
+          <IconButton icon="shuffle" label={t('a11yMoveTable')} onPress={onMoveTable} styles={styles} />
         )}
         {onMoveItems && (
-          <IconButton icon="✂️" label={t('a11yMoveItems')} onPress={onMoveItems} styles={styles} />
+          <IconButton icon="scissors" label={t('a11yMoveItems')} onPress={onMoveItems} styles={styles} />
         )}
-        {onDiscount && <IconButton icon="🏷️" label={t('a11yDiscount')} onPress={onDiscount} styles={styles} />}
+        {onDiscount && <IconButton icon="tag" label={t('a11yDiscount')} onPress={onDiscount} styles={styles} />}
         <View style={styles.cardActionsSpacer} />
-        <IconButton icon="🗑️" label={t('a11yDeleteTable')} onPress={onDelete} danger styles={styles} />
+        <IconButton icon="trash-2" label={t('a11yDeleteTable')} onPress={onDelete} danger styles={styles} />
       </View>
     </View>
   );
@@ -875,17 +894,16 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
     },
     iconButtonDanger: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.border },
-    iconButtonText: { fontSize: 22 },
     openBillHint: { fontSize: 12, color: colors.accent, fontWeight: '700', marginTop: 4 },
     cardPast: { opacity: 0.6 },
     cardLeft: { flex: 1, paddingRight: 12 },
     tableLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     tableLabel: { fontSize: 18, fontWeight: '700', color: colors.text },
-    noteIndicator: { fontSize: 14 },
     closedAtText: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
     cardRight: { alignItems: 'flex-end' },
     cardSumText: { fontSize: 18, fontWeight: '700', color: colors.text },
-    progressText: { fontSize: 13, color: colors.textSecondary, marginTop: 4 },
+    progressRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+    progressText: { fontSize: 13, color: colors.textSecondary },
     emptyText: { textAlign: 'center', color: colors.textFaint, marginTop: 32 },
     footnote: { fontSize: 11, color: colors.textFaint, marginTop: 4, textAlign: 'center' },
     // "Tisch löschen"-Dialog (siehe requestDeleteTable) — dieselbe Optik wie der
@@ -904,7 +922,7 @@ const createStyles = (colors: ThemeColors) =>
       width: '100%',
       maxWidth: 380,
     },
-    modalEmoji: { fontSize: 36, textAlign: 'center', marginBottom: 4 },
+    modalIcon: { alignSelf: 'center', marginBottom: 8 },
     modalCardTall: { maxHeight: '90%' },
     modalStep: { fontSize: 13, fontWeight: '800', color: colors.textMuted, marginTop: 4, marginBottom: 8 },
     moveItemsList: { maxHeight: 260, marginBottom: 12 },
@@ -946,6 +964,7 @@ const createStyles = (colors: ThemeColors) =>
     targetChipActive: { backgroundColor: colors.accentSurface, borderColor: colors.accent },
     targetChipText: { fontSize: 16, fontWeight: '700', color: colors.text },
     targetChipTextActive: { color: colors.accent },
+    targetChipInner: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     targetInput: {
       borderWidth: 1,
       borderColor: colors.borderStrong,

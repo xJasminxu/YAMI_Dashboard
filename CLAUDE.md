@@ -115,7 +115,8 @@ Rolle des Geräts:
    Auswahl wird live berechnet. Rein zur Orientierung für die Bedienung — es wird nichts
    gebucht oder gespeichert; die verbindliche Rechnung druckt weiterhin die Kasse. Jede
    offene Tischkarte in der Übersicht hat unten eine Icon-Leiste (Icons statt Text,
-   Beschriftung nur als accessibilityLabel): ➕ neue Bestellung für diesen Tisch, 🔀 Tisch
+   Beschriftung nur als accessibilityLabel; dezente Feather-Linien-Icons aus
+   `@expo/vector-icons` statt Emojis — im Text unten stehen zur Kürze weiter die Emojis): ➕ neue Bestellung für diesen Tisch, 🔀 Tisch
    wechseln / zusammenführen, ✂️ einzelne Positionen verschieben, 🗑️ Bestellungen löschen
    (PIN). 🔀 und ✂️ leben bewusst in der Übersicht (nicht mehr in der Abrechnung), weil man
    dafür mehrere Tische gleichzeitig im Blick braucht; beide nutzen denselben Zielauswahl-
