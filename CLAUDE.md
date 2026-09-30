@@ -327,15 +327,7 @@ Siehe `supabase/schema.sql` für die vollständige Definition. Kurzfassung:
 - `order_items` — order_id, menu_item_id, status (offen/fertig), variant_hanzi/variant_de
   (gewählte Variante), extras (gewählte Extras + Menge + Preis), unit_price (Preis-Snapshot
   der Grundposition zum Bestellzeitpunkt, siehe unten), note (Freitext der Bedienung),
-  spice_level (Schärfegrad 1-3, null = nicht scharf, siehe unten), created_at, done_at
-
-Schärfegrad: Bei Hauptspeisen (`kitchen_station = 'hauptspeise'`: Suppen, Warme Speisen,
-Ramen, Nudeln — nicht Vorspeisen, BBQ, Bar oder "Diverses") zeigt jede Warenkorb-Zeile in
-der Bestellaufnahme eine Chip-Reihe "Nicht scharf | 🌶️ | 🌶️🌶️ | 🌶️🌶️🌶️" (`lib/spice.ts`).
-Der Schärfegrad ist Teil des Warenkorb-Schlüssels, unterschiedlich scharfe Portionen
-desselben Gerichts stehen also als getrennte Zeilen da. Küchen-Tickets, Anzahl-Tab, Status,
-Tisch-Detail und Abrechnung hängen die Chilis an den Gerichtenamen an ("R1 · 豚骨拉面 · 🌶️🌶️")
-und gruppieren nach Schärfegrad getrennt.
+  created_at, done_at
 
 Modifier-Konzept (Varianten + Extras): manche `menu_items` verlangen beim Bestellen eine
 Dialog-Auswahl statt direkt in den Warenkorb zu wandern. `variant_options` ist eine Pflicht-

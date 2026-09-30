@@ -91,8 +91,6 @@ export interface OrderItem {
   // Abrechnung in der Tischübersicht. Bei Items ohne hinterlegten Preis null.
   unit_price: number | null;
   note: string | null;
-  // Schärfegrad 1-3 (🌶️), nur bei Hauptspeisen wählbar (siehe lib/spice.ts). null = nicht scharf.
-  spice_level: number | null;
   created_at: string;
   done_at: string | null;
   // null = in der vorläufigen Abrechnung noch nicht als bezahlt markiert (siehe

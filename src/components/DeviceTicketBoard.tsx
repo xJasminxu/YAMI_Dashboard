@@ -12,7 +12,6 @@ import { useTheme } from '../theme/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
 import { translate, useI18n } from '../i18n/LanguageContext';
 import type { StringKey } from '../i18n/strings';
-import { spiceEmojis, spiceSuffix } from '../lib/spice';
 
 // Übersetzer für die Board-Oberfläche: Bar immer Deutsch, Küche nach gewählter Sprache
 // (Gerichtenamen auf den Tickets bleiben unabhängig davon zweisprachig).
@@ -150,7 +149,7 @@ function groupItems(items: DeviceOrderItem[]): ItemGroup[] {
       .map((e) => `${e.name_de}x${e.quantity}`)
       .sort()
       .join('|');
-    const key = [item.menu_item.id, item.variant_de ?? '', extrasKey, item.note ?? '', item.spice_level ?? 0, item.status].join('::');
+    const key = [item.menu_item.id, item.variant_de ?? '', extrasKey, item.note ?? '', item.status].join('::');
     const group = groups.get(key);
     if (group) group.ids.push(item.id);
     else groups.set(key, { key, item, ids: [item.id] });
@@ -185,9 +184,7 @@ function aggregateOpen(orders: GroupedOrder[], predicate: (item: DeviceOrderItem
     for (const item of order.items) {
       if (item.status !== 'offen' || !predicate(item)) continue;
 
-      // Schärfegrad zählt wie die Variante getrennt ("3× Ramen 🌶️🌶️"), da anders zubereitet.
-      const variantLabel =
-        [item.variant_hanzi ?? item.variant_de, spiceEmojis(item.spice_level)].filter(Boolean).join(' · ') || null;
+      const variantLabel = item.variant_hanzi ?? item.variant_de ?? null;
       const key = `${item.menu_item.id}::${variantLabel ?? ''}`;
       const existing = byKey.get(key);
       if (existing) {
@@ -1659,7 +1656,6 @@ function TicketCard({
               {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
               {item.menu_item.name_hanzi}
               {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
-              {spiceSuffix(item.spice_level)}
             </Text>
             <Text style={[styles.itemDe, large && styles.itemDeLarge, item.status === 'fertig' && styles.itemDone]}>
               {item.menu_item.name_de}
@@ -1677,7 +1673,6 @@ function TicketCard({
             {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
             {item.menu_item.name_de}
             {item.variant_de ? ` · ${item.variant_de}` : ''}
-            {spiceSuffix(item.spice_level)}
           </Text>
         )}
         {item.extras && item.extras.length > 0 && (
