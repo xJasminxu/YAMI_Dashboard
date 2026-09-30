@@ -25,6 +25,7 @@ import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
 import { translate, useI18n, type Language } from '../../i18n/LanguageContext';
 import { categoryEmoji, MENU_GROUP_EMOJIS, titleCase } from '../../lib/emoji';
+import { MAX_SPICE_LEVEL, spiceEmojis, supportsSpiceLevel } from '../../lib/spice';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Order'>;
 
@@ -63,6 +64,8 @@ interface CartLine {
   unitPrice: number | null; // Preis für eine Portion Grundgericht/-getränk (inkl. Variante, exkl. Extras)
   extras: CartExtra[];
   note: string;
+  // 0 = nicht scharf, 1-3 = 🌶️ (nur bei Hauptspeisen wählbar, siehe lib/spice.ts)
+  spiceLevel: number;
   quantity: number;
 }
 
@@ -73,8 +76,10 @@ function extrasSignature(extras: CartExtra[]) {
     .join('|');
 }
 
-function cartKeyFor(menuItemId: string, variantDe: string | null, extras: CartExtra[]) {
-  return `${menuItemId}::${variantDe ?? ''}::${extrasSignature(extras)}`;
+// Schärfegrad gehört mit zum Schlüssel: "2× Ramen 🌶️🌶️ + 1× Ramen nicht scharf" sind zwei
+// Zeilen, weil die Küche sie unterschiedlich zubereitet.
+function cartKeyFor(menuItemId: string, variantDe: string | null, extras: CartExtra[], spiceLevel = 0) {
+  return `${menuItemId}::${variantDe ?? ''}::${extrasSignature(extras)}::${spiceLevel}`;
 }
 
 // Bearbeitbar (Variante/Extras/Beschreibung nachträglich ändern, siehe handleEditCartLine)
@@ -274,6 +279,15 @@ export default function OrderScreen({ route }: Props) {
     return map;
   }, [categories]);
 
+  // Gerichte, bei denen im Warenkorb ein Schärfegrad gewählt werden kann (Hauptspeisen).
+  const spiceableItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const category of categories) {
+      for (const item of category.items) if (supportsSpiceLevel(item, category)) ids.add(item.id);
+    }
+    return ids;
+  }, [categories]);
+
   // Die gerade zum Bearbeiten geöffnete Warenkorb-Zeile (siehe editingCartKey) — liefert
   // die aktuelle Variante/Extras/Beschreibung, mit der die Dialoge unten vorausgefüllt
   // werden, statt leer zu starten.
@@ -309,6 +323,7 @@ export default function OrderScreen({ route }: Props) {
           unitPrice,
           extras,
           note: '',
+          spiceLevel: 0,
           quantity: 1,
         },
       ];
@@ -328,7 +343,7 @@ export default function OrderScreen({ route }: Props) {
       if (!line) return prev;
 
       const unitPrice = variant?.price ?? item.price ?? null;
-      const newCartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras);
+      const newCartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras, line.spiceLevel);
 
       if (newCartKey === cartKey) {
         return prev.map((l) =>
@@ -350,6 +365,24 @@ export default function OrderScreen({ route }: Props) {
           ? { ...l, cartKey: newCartKey, variantHanzi: variant?.name_hanzi ?? null, variantDe: variant?.name_de ?? null, unitPrice, extras }
           : l
       );
+    });
+  }
+
+  // Wie updateCartLine: der neue Schärfegrad ändert den cartKey — trifft er dabei eine
+  // bereits existierende Zeile (gleiches Gericht mit diesem Schärfegrad), werden die
+  // Mengen zusammengeführt.
+  function setSpiceLevel(cartKey: string, spiceLevel: number) {
+    setCart((prev) => {
+      const line = prev.find((l) => l.cartKey === cartKey);
+      if (!line || line.spiceLevel === spiceLevel) return prev;
+      const newCartKey = cartKeyFor(line.menuItemId, line.variantDe, line.extras, spiceLevel);
+      const collision = prev.find((l) => l.cartKey === newCartKey);
+      if (collision) {
+        return prev
+          .filter((l) => l.cartKey !== cartKey)
+          .map((l) => (l.cartKey === newCartKey ? { ...l, quantity: l.quantity + line.quantity } : l));
+      }
+      return prev.map((l) => (l.cartKey === cartKey ? { ...l, cartKey: newCartKey, spiceLevel } : l));
     });
   }
 
@@ -486,6 +519,7 @@ export default function OrderScreen({ route }: Props) {
             : null,
         unit_price: line.unitPrice,
         note: line.note.trim() ? line.note.trim() : null,
+        spice_level: line.spiceLevel > 0 ? line.spiceLevel : null,
       }));
     });
 
@@ -694,6 +728,27 @@ export default function OrderScreen({ route }: Props) {
                             <Text style={styles.cartLinePrice}>
                               {formatPrice(lineUnitTotal(line)! * line.quantity)}
                             </Text>
+                          )}
+                          {spiceableItemIds.has(line.menuItemId) && (
+                            <View style={styles.spiceRow}>
+                              {Array.from({ length: MAX_SPICE_LEVEL + 1 }, (_, level) => {
+                                const active = line.spiceLevel === level;
+                                return (
+                                  <TouchableOpacity
+                                    key={level}
+                                    style={[styles.spiceChip, active && styles.spiceChipActive]}
+                                    onPress={() => setSpiceLevel(line.cartKey, level)}
+                                    accessibilityRole="radio"
+                                    accessibilityState={{ selected: active }}
+                                    accessibilityLabel={level === 0 ? t('spiceNone') : t('spiceLevelLabel', { n: level })}
+                                  >
+                                    <Text style={[styles.spiceChipText, active && styles.spiceChipTextActive]}>
+                                      {level === 0 ? t('spiceNone') : spiceEmojis(level)}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
                           )}
                           <TouchableOpacity style={styles.noteField} onPress={() => setNoteEditLine(line)}>
                             <Text
@@ -1499,6 +1554,18 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: 4,
     },
     noteFieldText: { fontSize: 13, color: colors.text },
+    // Schärfegrad-Auswahl einer Warenkorb-Zeile (nur Hauptspeisen, siehe spiceableItemIds).
+    spiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+    spiceChip: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 14,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    spiceChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    spiceChipText: { fontSize: 13, color: colors.textSecondary },
+    spiceChipTextActive: { color: '#fff', fontWeight: '600' },
     noteFieldPlaceholder: { fontSize: 13, color: colors.textFaint },
     // Stift-Button zum nachträglichen Ändern von Variante/Extras/Beschreibung einer
     // Warenkorb-Zeile (siehe handleEditCartLine) — nur sichtbar bei Items, die überhaupt

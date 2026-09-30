@@ -17,6 +17,7 @@ import { ADMIN_PIN } from '../../lib/adminPin';
 import { formatDateTime } from '../../lib/datetime';
 import { itemTotal, formatPrice } from '../../lib/pricing';
 import { logActivity } from '../../lib/activityLog';
+import { spiceSuffix } from '../../lib/spice';
 import DiscountDialog from '../../components/DiscountDialog';
 import { Feather } from '@expo/vector-icons';
 import { useI18n } from '../../i18n/LanguageContext';
@@ -576,6 +577,7 @@ export default function TableOverviewScreen({ navigation }: Props) {
                         {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
                         {item.menu_item.name_hanzi ?? item.menu_item.name_de}
                         {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
+                        {spiceSuffix(item.spice_level)}
                       </Text>
                       {item.menu_item.name_hanzi && (
                         <Text style={styles.moveItemSub} numberOfLines={1}>

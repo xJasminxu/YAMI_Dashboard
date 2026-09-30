@@ -18,6 +18,7 @@ import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import { formatDateTime } from '../../lib/datetime';
 import { itemTotal, formatPrice } from '../../lib/pricing';
 import { logActivity } from '../../lib/activityLog';
+import { spiceSuffix } from '../../lib/spice';
 import DiscountDialog from '../../components/DiscountDialog';
 import { useI18n } from '../../i18n/LanguageContext';
 import { supabase } from '../../lib/supabase';
@@ -376,6 +377,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
                   {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
                   {item.menu_item.name_hanzi}
                   {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
+                  {spiceSuffix(item.spice_level)}
                 </Text>
                 <Text style={[styles.itemDe, (isDone || paid) && styles.itemDone]}>
                   {item.menu_item.name_de}

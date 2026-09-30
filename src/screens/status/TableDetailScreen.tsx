@@ -5,6 +5,7 @@ import { useDeviceOrders } from '../../hooks/useDeviceOrders';
 import type { DeviceOrderItem } from '../../hooks/useDeviceOrders';
 import type { RootStackParamList } from '../../navigation/types';
 import { groupItems, SECTION_META, SECTIONS, sectionFor, sectionLabel, type Section } from '../../lib/sections';
+import { spiceSuffix } from '../../lib/spice';
 import { useI18n } from '../../i18n/LanguageContext';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
@@ -125,6 +126,7 @@ function ItemRow({ item, count, styles }: { item: DeviceOrderItem; count: number
         {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
         {item.menu_item.name_hanzi ?? item.menu_item.name_de}
         {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
+        {spiceSuffix(item.spice_level)}
       </Text>
       {item.menu_item.name_hanzi && (
         <Text style={[styles.itemDe, isDone && styles.itemDone]}>

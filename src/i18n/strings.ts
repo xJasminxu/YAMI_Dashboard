@@ -78,6 +78,8 @@ export const STRINGS = {
   cartSummary: { de: "🛒 {n} im Warenkorb · {sum}", zh: "🛒 购物车 {n} 件 · {sum}" },
   cartToOrder: { de: "🛒 {n} im Warenkorb · Zur Bestellung →", zh: "🛒 购物车 {n} 件 · 查看订单 →" },
   notePlaceholder: { de: "💬 Notiz…", zh: "💬 备注…" },
+  spiceNone: { de: "Nicht scharf", zh: "不辣" },
+  spiceLevelLabel: { de: "Schärfe {n}", zh: "辣度 {n}" },
   sum: { de: "Summe", zh: "总计" },
   sumIncomplete: { de: " (unvollständig, s.u.)", zh: "（不完整，见下）" },
   sending: { de: "⏳ Wird gesendet…", zh: "⏳ 发送中…" },

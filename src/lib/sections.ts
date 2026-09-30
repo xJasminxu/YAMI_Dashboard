@@ -1,5 +1,6 @@
 import type { DeviceOrderItem } from '../hooks/useDeviceOrders';
 import type { Language } from '../i18n/LanguageContext';
+import { spiceSuffix } from './spice';
 
 // Gemeinsame Aufteilung für Status-Ansicht und Tisch-Detail (StatusScreen.tsx,
 // TableDetailScreen.tsx): Küche nach Station (categories.kitchen_station, wie in
@@ -47,7 +48,7 @@ export function groupItems(items: DeviceOrderItem[]): ItemGroup[] {
       .map((e) => `${e.name_de}x${e.quantity}`)
       .sort()
       .join('|');
-    const key = [item.menu_item.id, item.variant_de ?? '', extrasKey, item.note ?? '', item.status].join('::');
+    const key = [item.menu_item.id, item.variant_de ?? '', extrasKey, item.note ?? '', item.spice_level ?? 0, item.status].join('::');
     const group = groups.get(key);
     if (group) group.count += 1;
     else groups.set(key, { key, item, count: 1 });
@@ -60,7 +61,7 @@ export function dishLabel(item: DeviceOrderItem): string {
   const { name_hanzi, name_de, item_code } = item.menu_item;
   const code = item_code ? `${item_code} · ` : '';
   const variant = item.variant_hanzi ?? item.variant_de;
-  return `${code}${name_hanzi ?? name_de}${variant ? ` · ${variant}` : ''}`;
+  return `${code}${name_hanzi ?? name_de}${variant ? ` · ${variant}` : ''}${spiceSuffix(item.spice_level)}`;
 }
 
 export function minutesSince(iso: string, now: number): number {
