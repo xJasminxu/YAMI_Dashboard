@@ -116,6 +116,46 @@ function clamp(value: number, min: number, max: number) {
 const CART_ITEMS_COLLAPSED_HEIGHT = 0;
 const CART_ITEMS_EXPANDED_HEIGHT = 320;
 
+// Kategorie-Übersicht skaliert mit der verfügbaren Bildschirmhöhe, damit alle Buttons ohne
+// Scrollen sichtbar sind: aus der gemessenen Höhe der Liste (onLayout, also bereits ohne
+// Tischnummer-Feld und Warenkorb-Panel) wird die Button-Höhe berechnet, Schriftgrößen
+// skalieren mit. Unterhalb von CATEGORY_BUTTON_MIN_HEIGHT würde der Text nicht mehr
+// passen — dann wird (auf sehr kleinen Geräten) doch wieder gescrollt.
+// Die Konstanten müssen zu groupTitle/groupSection/categoryGrid in createStyles passen.
+const CATEGORY_COLUMNS = 3;
+const CATEGORY_BUTTON_MAX_HEIGHT = 104;
+const CATEGORY_BUTTON_MIN_HEIGHT = 68;
+const GROUP_TITLE_LINE_HEIGHT = 22;
+const GROUP_TITLE_MARGIN = 6;
+const GROUP_SECTION_MARGIN = 12;
+const CATEGORY_GRID_GAP = 8;
+const CATEGORY_LIST_PADDING_BOTTOM = 8;
+
+function computeCategorySizing(available: number | null, groupCounts: number[]) {
+  const rows = groupCounts.map((n) => Math.ceil(n / CATEGORY_COLUMNS));
+  const totalRows = rows.reduce((sum, r) => sum + r, 0);
+  const fixed =
+    groupCounts.length * (GROUP_TITLE_LINE_HEIGHT + GROUP_TITLE_MARGIN + GROUP_SECTION_MARGIN) +
+    rows.reduce((sum, r) => sum + (r - 1) * CATEGORY_GRID_GAP, 0) +
+    CATEGORY_LIST_PADDING_BOTTOM +
+    4; // kleiner Puffer gegen Rundungsfehler
+  // Solange noch nicht gemessen (erster Render) in voller Größe.
+  const buttonHeight =
+    !available || totalRows === 0
+      ? CATEGORY_BUTTON_MAX_HEIGHT
+      : clamp(Math.floor((available - fixed) / totalRows), CATEGORY_BUTTON_MIN_HEIGHT, CATEGORY_BUTTON_MAX_HEIGHT);
+  const scale = buttonHeight / CATEGORY_BUTTON_MAX_HEIGHT;
+  const textScale = Math.sqrt(scale); // Text schrumpft langsamer als das Emoji
+  return {
+    buttonHeight,
+    paddingVertical: Math.round(3 + 9 * scale),
+    emojiSize: Math.max(18, Math.round(32 * scale)),
+    emojiMargin: Math.round(4 * scale),
+    hanziSize: Math.max(13, Math.round(16 * textScale)),
+    deSize: Math.max(10, Math.round(12 * textScale)),
+  };
+}
+
 // Preis-Anzeige für die Item-Liste: fixer Preis, "ab X€" wenn der Preis erst per
 // Variante feststeht (z.B. Fried Chicken 4/8 Stück), oder nichts, falls noch kein
 // Preis hinterlegt ist.
@@ -270,6 +310,23 @@ export default function OrderScreen({ route }: Props) {
     }
     return groups;
   }, [categories]);
+
+  const visibleGroups = useMemo(
+    () => (Object.keys(groupedCategories) as MenuGroup[]).filter((g) => groupedCategories[g].length > 0),
+    [groupedCategories]
+  );
+  const [categoryListHeight, setCategoryListHeight] = useState<number | null>(null);
+  const categorySizing = useMemo(
+    () => computeCategorySizing(categoryListHeight, visibleGroups.map((g) => groupedCategories[g].length)),
+    [categoryListHeight, visibleGroups, groupedCategories]
+  );
+  const categoryButtonSizeStyle = {
+    minHeight: categorySizing.buttonHeight,
+    paddingVertical: categorySizing.paddingVertical,
+  };
+  const categoryEmojiSizeStyle = { fontSize: categorySizing.emojiSize, marginBottom: categorySizing.emojiMargin };
+  const categoryHanziSizeStyle = { fontSize: categorySizing.hanziSize };
+  const categoryDeSizeStyle = { fontSize: categorySizing.deSize };
 
   // Nachschlagen des vollen MenuItem (inkl. variant_options/extra_options) zu einer
   // Warenkorb-Zeile — die Zeile selbst kennt nur menuItemId, für den Bearbeiten-Dialog
@@ -646,8 +703,12 @@ export default function OrderScreen({ route }: Props) {
           />
 
           <FlatList
-            data={(Object.keys(groupedCategories) as MenuGroup[]).filter((g) => groupedCategories[g].length > 0)}
+            data={visibleGroups}
             keyExtractor={(group) => group}
+            onLayout={(e) => {
+              const h = Math.round(e.nativeEvent.layout.height);
+              setCategoryListHeight((prev) => (prev === h ? prev : h));
+            }}
             contentContainerStyle={styles.categoryListContent}
             renderItem={({ item: group }) => (
               <View style={styles.groupSection}>
@@ -668,22 +729,24 @@ export default function OrderScreen({ route }: Props) {
                     return (
                       <TouchableOpacity
                         key={category.id}
-                        style={styles.categoryButton}
+                        style={[styles.categoryButton, categoryButtonSizeStyle]}
                         activeOpacity={0.75}
                         onPress={() =>
                           soleCustomItem ? setCustomEntryItem(soleCustomItem) : setActiveCategoryId(category.id)
                         }
                       >
-                        <Text style={styles.categoryEmoji}>{categoryEmoji(category.name_de, category.menu_group)}</Text>
+                        <Text style={[styles.categoryEmoji, categoryEmojiSizeStyle]}>
+                          {categoryEmoji(category.name_de, category.menu_group)}
+                        </Text>
                         {category.name_hanzi ? (
                           <>
-                            <Text style={styles.categoryHanzi}>{category.name_hanzi}</Text>
-                            <Text style={styles.categoryDe}>{titleCase(category.name_de)}</Text>
+                            <Text style={[styles.categoryHanzi, categoryHanziSizeStyle]}>{category.name_hanzi}</Text>
+                            <Text style={[styles.categoryDe, categoryDeSizeStyle]}>{titleCase(category.name_de)}</Text>
                           </>
                         ) : (
                           // Bar-Kategorien (Getränke/Nachspeisen) haben kein Hanzi — deutschen
                           // Namen dann groß/prominent zeigen statt einer leeren Hanzi-Zeile.
-                          <Text style={styles.categoryHanzi}>{titleCase(category.name_de)}</Text>
+                          <Text style={[styles.categoryHanzi, categoryHanziSizeStyle]}>{titleCase(category.name_de)}</Text>
                         )}
                       </TouchableOpacity>
                     );
@@ -1433,25 +1496,26 @@ const createStyles = (colors: ThemeColors) =>
       marginBottom: 10,
     },
     numpadKeyText: { fontSize: 22, fontWeight: '700', color: colors.text },
-    categoryListContent: { paddingBottom: 8 },
-    groupSection: { marginBottom: 12 },
+    categoryListContent: { paddingBottom: CATEGORY_LIST_PADDING_BOTTOM },
+    groupSection: { marginBottom: GROUP_SECTION_MARGIN },
     groupTitle: {
       fontSize: 17,
+      lineHeight: GROUP_TITLE_LINE_HEIGHT,
       fontWeight: '800',
-      marginBottom: 6,
+      marginBottom: GROUP_TITLE_MARGIN,
       color: colors.text,
       textAlign: 'center',
     },
-    categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+    categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: CATEGORY_GRID_GAP, justifyContent: 'center' },
     categoryButton: {
       backgroundColor: colors.surface,
       borderRadius: 16,
       borderWidth: 1,
       borderColor: colors.border,
-      paddingVertical: 8,
+      paddingVertical: 12,
       paddingHorizontal: 8,
       width: '31%',
-      minHeight: 80,
+      minHeight: CATEGORY_BUTTON_MAX_HEIGHT,
       alignItems: 'center',
       justifyContent: 'center',
       shadowColor: colors.shadow,
@@ -1460,9 +1524,9 @@ const createStyles = (colors: ThemeColors) =>
       shadowOffset: { width: 0, height: 2 },
       elevation: 2,
     },
-    categoryEmoji: { fontSize: 26, marginBottom: 2 },
-    categoryHanzi: { fontSize: 15, fontWeight: '700', color: colors.text, textAlign: 'center' },
-    categoryDe: { fontSize: 11, color: colors.textMuted, marginTop: 1, textAlign: 'center' },
+    categoryEmoji: { fontSize: 32, marginBottom: 4 },
+    categoryHanzi: { fontSize: 16, fontWeight: '700', color: colors.text, textAlign: 'center' },
+    categoryDe: { fontSize: 12, color: colors.textMuted, marginTop: 1, textAlign: 'center' },
     // Deutlicher Abstand zum Screen-Header (dessen "← Hauptmenü"-Button sonst zu nah an
     // diesem "← Kategorien"-Button liegt und ständig aus Versehen getroffen wird).
     backButton: { marginTop: 20, marginBottom: 12, paddingVertical: 4 },
