@@ -4,6 +4,27 @@ Digitales Bestellsystem für die Kommunikation Bedienung → Küche/Bar. Kein Zu
 dem bestehenden Kassensystem. 
 
 
+## Web-App im Restaurant-WLAN (Produktion)
+
+Statt des Entwicklungsservers (`start-yami.bat`, Port 8081) läuft die App im Alltag als
+fertig gebaute Web-App vom Restaurant-PC aus — schneller, stabiler, kein Metro/Expo Go nötig.
+
+1. **Einmalig:** `.env.example` nach `.env` kopieren und Supabase-URL + Anon-Key eintragen
+   (`.env` ist nicht im Git).
+2. **Bauen** (einmalig und nach jedem Code-Update): `build-web.bat` doppelklicken
+   (= `npm install` + `npx expo export --platform web`, Ergebnis in `dist\`).
+3. **Starten:** `start-yami-web.bat` doppelklicken. Fenster offen lassen; stürzt der Server
+   ab, startet er nach 5 s neu. Log: `web-server.log`.
+4. **Auf den Geräten:** im Browser `http://192.168.2.208:8080` öffnen (iPhone: Safari).
+   Über Teilen → "Zum Home-Bildschirm" wird daraus ein App-Icon ohne Browserleiste.
+
+Hinweise:
+- Die Supabase-Werte aus `.env` werden beim Bauen ins JS-Bundle übernommen (normal für den
+  Anon-Key, der ist ohnehin öffentlich). Nach Änderung der `.env` neu bauen.
+- Windows-Firewall: beim ersten Start "Zugriff zulassen" für Node.js im privaten Netzwerk
+  bestätigen, sonst erreichen Handys/Tablets den PC nicht.
+- Anderer Port: `set PORT=3000` vor `node scripts\serve-web.js`.
+
 ## Troubleshooting: Schema-Änderungen auf einem bestehenden Supabase-Projekt
 
 `schema.sql` nutzt überall `create table if not exists` — das ist super für ein neues
