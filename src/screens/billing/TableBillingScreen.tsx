@@ -90,8 +90,17 @@ export default function TableBillingScreen({ route, navigation }: Props) {
   const tableId = tableOrders[0]?.table.id ?? null;
   const tableNote = tableOrders[0]?.table.note ?? null;
 
+  // Offene Positionen zuerst, bereits bezahlte ans Ende — innerhalb beider Gruppen
+  // weiterhin nach Kategorie sortiert.
   const items = useMemo(
-    () => tableOrders.flatMap((order) => order.items).sort((a, b) => a.menu_item.category.sort_order - b.menu_item.category.sort_order),
+    () =>
+      tableOrders
+        .flatMap((order) => order.items)
+        .sort(
+          (a, b) =>
+            Number(a.paid_method !== null) - Number(b.paid_method !== null) ||
+            a.menu_item.category.sort_order - b.menu_item.category.sort_order
+        ),
     [tableOrders]
   );
 
@@ -304,7 +313,20 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           {t('table', { n: tableNumber })}
           {showClosed && closedAt ? t('closedSuffix', { time: formatDateTime(closedAt) }) : ''}
         </Text>
-        <Text style={styles.grandTotal}>{t('grandTotal', { sum: formatPrice(grandTotal) })}</Text>
+        <View style={styles.headerRight}>
+          <Text style={styles.grandTotal}>{t('grandTotal', { sum: formatPrice(grandTotal) })}</Text>
+          {!showClosed && (
+            <TouchableOpacity
+              style={[styles.discountIconButton, items.length === 0 && styles.discountIconButtonDisabled]}
+              onPress={() => setDiscountOpen(true)}
+              disabled={items.length === 0}
+              accessibilityLabel={t('addDiscount')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.discountIconText}>🏷️</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
       <TouchableOpacity style={styles.noteRow} onPress={openNoteEditor} disabled={!tableId}>
         {tableNote ? (
@@ -326,6 +348,7 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           <Text style={styles.openSummaryText}>{t('stillOpenSum', { sum: formatPrice(openTotal) })}</Text>
         </View>
       )}
+      {/* Auswahl-Links und "Bezahlt" teilen sich eine Zeile, damit die Liste mehr Platz hat. */}
       <View style={styles.selectRow}>
         <TouchableOpacity onPress={selectAll}>
           <Text style={styles.selectAction}>{t('selectAll')}</Text>
@@ -333,19 +356,18 @@ export default function TableBillingScreen({ route, navigation }: Props) {
         <TouchableOpacity onPress={selectNone}>
           <Text style={styles.selectAction}>{t('selectNone')}</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.paidButton, selectedIds.size === 0 && styles.paidButtonDisabled]}
+          onPress={requestMarkSelectedAsPaid}
+          disabled={selectedIds.size === 0}
+        >
+          <Text style={styles.paidButtonText} numberOfLines={1}>
+            {selectedIds.size > 0
+              ? t('paidWithSelection', { n: selectedIds.size, sum: formatPrice(selectedTotal) })
+              : t('paid')}
+          </Text>
+        </TouchableOpacity>
       </View>
-
-      <TouchableOpacity
-        style={[styles.paidButton, selectedIds.size === 0 && styles.paidButtonDisabled]}
-        onPress={requestMarkSelectedAsPaid}
-        disabled={selectedIds.size === 0}
-      >
-        <Text style={styles.paidButtonText}>
-          {selectedIds.size > 0
-            ? t('paidWithSelection', { n: selectedIds.size, sum: formatPrice(selectedTotal) })
-            : t('paid')}
-        </Text>
-      </TouchableOpacity>
 
       <FlatList
         data={items}
@@ -423,37 +445,32 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           );
         }}
         ListEmptyComponent={<Text style={styles.emptyText}>{t('noItemsForTable')}</Text>}
+        // Hinweistext scrollt mit der Liste mit, statt dauerhaft Platz im Footer zu belegen.
+        ListFooterComponent={
+          items.length > 0 ? <Text style={styles.footerDisclaimer}>{t('billingDisclaimer')}</Text> : null
+        }
       />
 
       <View style={styles.footer}>
         {hasUnpriced && <Text style={styles.footerNote}>{t('unpricedNote')}</Text>}
         <View style={styles.footerRow}>
-          <Text style={styles.footerLabel}>
-            {t('stillOpenCount', { open: items.length - paidItems.length, total: items.length })}
-          </Text>
-          <Text style={styles.footerValue}>{formatPrice(openTotal)}</Text>
+          <View style={styles.footerTotals}>
+            <Text style={styles.footerLabel}>
+              {t('stillOpenCount', { open: items.length - paidItems.length, total: items.length })}
+            </Text>
+            <Text style={styles.footerValue}>{formatPrice(openTotal)}</Text>
+          </View>
+
+          {!showClosed && (
+            <TouchableOpacity
+              style={[styles.closeTableButton, items.length === 0 && styles.closeTableButtonDisabled]}
+              onPress={() => setCloseConfirmOpen(true)}
+              disabled={items.length === 0}
+            >
+              <Text style={styles.closeTableButtonText}>{t('closeTable')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
-        <Text style={styles.footerDisclaimer}>{t('billingDisclaimer')}</Text>
-
-        {!showClosed && (
-          <TouchableOpacity
-            style={[styles.discountButton, items.length === 0 && styles.discountButtonDisabled]}
-            onPress={() => setDiscountOpen(true)}
-            disabled={items.length === 0}
-          >
-            <Text style={styles.discountButtonText}>{t('addDiscount')}</Text>
-          </TouchableOpacity>
-        )}
-
-        {!showClosed && (
-          <TouchableOpacity
-            style={[styles.closeTableButton, items.length === 0 && styles.closeTableButtonDisabled]}
-            onPress={() => setCloseConfirmOpen(true)}
-            disabled={items.length === 0}
-          >
-            <Text style={styles.closeTableButtonText}>{t('closeTable')}</Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       <Modal visible={paymentPromptOpen} transparent animationType="fade" onRequestClose={() => setPaymentPromptOpen(false)}>
@@ -612,10 +629,23 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'space-between',
       alignItems: 'center',
       paddingHorizontal: 16,
-      paddingTop: 16,
+      paddingTop: 12,
     },
     title: { fontSize: 22, fontWeight: '700', color: colors.text },
+    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     grandTotal: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
+    // Kleiner 🏷️-Button oben rechts zum Buchen eines Rabatts (DiscountDialog).
+    discountIconButton: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      borderWidth: 1.5,
+      borderColor: colors.warning,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    discountIconButtonDisabled: { borderColor: colors.borderStrong, opacity: 0.5 },
+    discountIconText: { fontSize: 16 },
     // Tisch-Notiz-Zeile (tables.note) direkt unter dem Titel — dieselbe Notiz wie in
     // TableOverviewScreen.tsx, hier zusätzlich antippbar zum Lesen/Editieren.
     noteRow: { paddingHorizontal: 16, paddingTop: 6 },
@@ -645,29 +675,32 @@ const createStyles = (colors: ThemeColors) =>
     openSummaryText: { fontSize: 13, fontWeight: '600', color: colors.warning },
     selectRow: {
       flexDirection: 'row',
+      alignItems: 'center',
       gap: 16,
       paddingHorizontal: 16,
       paddingVertical: 8,
     },
     selectAction: { fontSize: 13, color: colors.primary, fontWeight: '600' },
     paidButton: {
-      marginHorizontal: 16,
-      marginBottom: 12,
+      marginLeft: 'auto',
+      flexShrink: 1,
       backgroundColor: '#16a34a',
       borderRadius: 10,
-      paddingVertical: 12,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
       alignItems: 'center',
     },
     paidButtonDisabled: { backgroundColor: colors.textFaint },
-    paidButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+    paidButtonText: { color: '#fff', fontSize: 14, fontWeight: '700' },
     listContent: { paddingHorizontal: 16, paddingBottom: 8 },
     itemRow: {
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderRadius: 10,
-      padding: 12,
-      marginBottom: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      marginBottom: 6,
     },
     itemRowSelected: { backgroundColor: colors.successSurface },
     itemRowPaid: { backgroundColor: colors.surfaceAlt, opacity: 0.6 },
@@ -719,7 +752,7 @@ const createStyles = (colors: ThemeColors) =>
     // itemRow, damit das Feld nicht in den Abstand zur nächsten Position hineinragt.
     swipeRemoveAction: {
       width: 110,
-      marginBottom: 8,
+      marginBottom: 6,
       borderRadius: 10,
       backgroundColor: colors.danger,
       alignItems: 'center',
@@ -730,34 +763,27 @@ const createStyles = (colors: ThemeColors) =>
     footer: {
       borderTopWidth: 1,
       borderTopColor: colors.border,
-      padding: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
     },
     footerNote: { fontSize: 12, color: colors.warning, marginBottom: 6 },
+    // Offene Summe links, "Tisch abschließen" rechts in derselben Zeile.
     footerRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
+      gap: 12,
     },
-    footerLabel: { fontSize: 16, fontWeight: '700', color: colors.text },
+    footerTotals: { flexShrink: 1 },
+    footerLabel: { fontSize: 14, fontWeight: '700', color: colors.text },
     footerValue: { fontSize: 20, fontWeight: '800', color: colors.text },
-    footerDisclaimer: { fontSize: 11, color: colors.textFaint, marginTop: 8, lineHeight: 15 },
-    // "🏷️ Rabatt hinzufügen" über "Tisch abschließen" im Footer.
-    discountButton: {
-      marginTop: 14,
-      borderWidth: 1.5,
-      borderColor: colors.warning,
-      borderRadius: 10,
-      paddingVertical: 12,
-      alignItems: 'center',
-    },
-    discountButtonDisabled: { borderColor: colors.borderStrong },
-    discountButtonText: { color: colors.warning, fontSize: 15, fontWeight: '700' },
+    footerDisclaimer: { fontSize: 11, color: colors.textFaint, marginTop: 4, lineHeight: 15 },
     closeTableButton: {
-      marginTop: 14,
       borderWidth: 1.5,
       borderColor: colors.danger,
       borderRadius: 10,
-      paddingVertical: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
       alignItems: 'center',
     },
     closeTableButtonDisabled: { borderColor: colors.borderStrong },
