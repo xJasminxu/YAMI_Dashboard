@@ -361,11 +361,14 @@ export default function TableBillingScreen({ route, navigation }: Props) {
           onPress={requestMarkSelectedAsPaid}
           disabled={selectedIds.size === 0}
         >
-          <Text style={styles.paidButtonText} numberOfLines={1}>
-            {selectedIds.size > 0
-              ? t('paidWithSelection', { n: selectedIds.size, sum: formatPrice(selectedTotal) })
-              : t('paid')}
-          </Text>
+          {/* Label und Auswahl-Summe als getrennte Texte: reicht die Breite nicht, rutscht
+              die Summe als Ganzes in eine zweite Zeile, statt abgeschnitten zu werden. */}
+          <Text style={styles.paidButtonText}>{t('paid')}</Text>
+          {selectedIds.size > 0 && (
+            <Text style={styles.paidButtonText}>
+              {t('paidSelection', { n: selectedIds.size, sum: formatPrice(selectedTotal) })}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -681,17 +684,21 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 8,
     },
     selectAction: { fontSize: 13, color: colors.primary, fontWeight: '600' },
+    // Nimmt die gesamte restliche Breite der Zeile neben den Auswahl-Links ein.
     paidButton: {
-      marginLeft: 'auto',
-      flexShrink: 1,
+      flex: 1,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      alignItems: 'center',
+      columnGap: 6,
       backgroundColor: '#16a34a',
       borderRadius: 10,
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      alignItems: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 12,
     },
     paidButtonDisabled: { backgroundColor: colors.textFaint },
-    paidButtonText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+    paidButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
     listContent: { paddingHorizontal: 16, paddingBottom: 8 },
     itemRow: {
       flexDirection: 'row',

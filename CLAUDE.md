@@ -124,7 +124,8 @@ Rolle des Geräts:
    Nummernfeld für einen freien Tisch. 🏷️ bucht einen Rabatt direkt auf den offenen Tisch
    (`components/DiscountDialog.tsx` + `lib/discount.ts`: Betrag frei oder per 10/15/20/50 %-
    Kachel aus der Tischsumme, Beschreibung optional) — derselbe Dialog steckt auch als
-   "🏷️ Rabatt hinzufügen" im Footer der Abrechnung. In der Bestellaufnahme gibt es seit
+   kleines 🏷️-Icon oben rechts in der Abrechnung (neben der Gesamtsumme). In der Abrechnung
+   stehen offene Positionen oben, bereits bezahlte darunter. In der Bestellaufnahme gibt es seit
    Kurzem keinen Rabatt-Button mehr. Technisch ist ein Rabatt weiterhin eine `order_items`-
    Zeile auf dem Item der Rabatt-Kategorie (`categories.is_discount`) mit negativem
    `unit_price` und der Beschreibung in `variant_de`, direkt als "fertig" angelegt. 🔀 verschiebt den GANZEN Tisch (alle seine offenen

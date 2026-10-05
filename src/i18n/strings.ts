@@ -177,7 +177,7 @@ export const STRINGS = {
   selectAll: { de: "Alle auswählen", zh: "全选" },
   selectNone: { de: "Auswahl aufheben", zh: "取消选择" },
   paid: { de: "Bezahlt", zh: "已付款" },
-  paidWithSelection: { de: "Bezahlt ({n} · {sum})", zh: "已付款（{n} · {sum}）" },
+  paidSelection: { de: "({n} · {sum})", zh: "（{n} · {sum}）" },
   note: { de: "Notiz: {note}", zh: "备注：{note}" },
   remove: { de: "🗑 Entfernen", zh: "🗑 删除" },
   noItemsForTable: { de: "Keine Positionen für diesen Tisch.", zh: "这张桌没有项目。" },
