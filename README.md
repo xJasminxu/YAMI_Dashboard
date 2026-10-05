@@ -18,6 +18,16 @@ fertig gebaute Web-App vom Restaurant-PC aus — schneller, stabiler, kein Metro
 4. **Auf den Geräten:** im Browser `http://192.168.2.208:8080` öffnen (iPhone: Safari).
    Über Teilen → "Zum Home-Bildschirm" wird daraus ein App-Icon ohne Browserleiste.
 
+Server bedienen (alle per Doppelklick, fragen nach Adminrechten):
+
+| Datei | Was sie tut |
+|---|---|
+| `autostart-einrichten.bat` | Einmalig: Server startet ab jetzt bei jedem Hochfahren unsichtbar im Hintergrund, öffnet Port 8080 in der Firewall |
+| `server-starten.bat` | Startet den Server (über den Autostart-Dienst, falls eingerichtet, sonst in einem minimierten Fenster) |
+| `server-stoppen.bat` | Stoppt den Server; der Autostart bleibt eingerichtet |
+| `server-neustarten.bat` | Stoppt und startet neu, z.B. nach `build-web.bat` |
+| `autostart-entfernen.bat` | Schaltet den Autostart beim Hochfahren ab (fragt, ob der Server auch gleich gestoppt werden soll) |
+
 Hinweise:
 - Die Supabase-Werte aus `.env` werden beim Bauen ins JS-Bundle übernommen (normal für den
   Anon-Key, der ist ohnehin öffentlich). Nach Änderung der `.env` neu bauen.
