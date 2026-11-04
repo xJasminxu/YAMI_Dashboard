@@ -18,7 +18,17 @@ import { formatDateTime } from '../../lib/datetime';
 import { categoryEmoji, titleCase } from '../../lib/emoji';
 import { formatPrice } from '../../lib/pricing';
 import { supabase } from '../../lib/supabase';
-import type { ActivityKind, ActivityLogEntry, Category, ExtraOption, MenuItem, VariantOption } from '../../types/database';
+import type {
+  ActivityKind,
+  ActivityLogEntry,
+  Category,
+  ExtraOption,
+  KitchenStation,
+  MenuGroup,
+  MenuItem,
+  VariantOption,
+} from '../../types/database';
+import { SECTION_META, sectionLabel } from '../../lib/sections';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
 import { translate, useI18n, type Language } from '../../i18n/LanguageContext';
@@ -155,6 +165,9 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
   const [search, setSearch] = useState('');
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  // Für die sort_order neuer Kategorien auch die Rabatt-Kategorie mitzählen.
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
 
   const load = useCallback(async () => {
     const [categoriesRes, itemsRes] = await Promise.all([
@@ -167,6 +180,7 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
       setError(null);
       // Rabatt-Kategorie ist kein Speisekarten-Eintrag (siehe OrderScreen), "Diverses"-
       // Sammelposten (is_custom_entry) haben keinen festen Preis — beide nicht editierbar.
+      setAllCategories(categoriesRes.data as Category[]);
       setCategories((categoriesRes.data as Category[]).filter((c) => !c.is_discount));
       setItems((itemsRes.data as MenuItem[]).filter((i) => !i.is_custom_entry));
     }
@@ -238,6 +252,9 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
           placeholderTextColor={styles.placeholder.color as string}
         />
         <Text style={styles.hint}>{t('adminHint')}</Text>
+        <TouchableOpacity style={styles.newCategoryButton} onPress={() => setCategoryDialogOpen(true)}>
+          <Text style={styles.newCategoryButtonText}>{t('newCategory')}</Text>
+        </TouchableOpacity>
         {error && <Text style={styles.errorText}>{error}</Text>}
 
         {grouped.map(({ category, active, hidden }) => {
@@ -307,6 +324,19 @@ function MenuEditor({ styles }: { styles: AdminStyles }) {
           });
           setExpanded((prev) => new Set(prev).add(saved.category_id));
           setEditor(null);
+        }}
+        styles={styles}
+      />
+
+      <CategoryEditorDialog
+        visible={categoryDialogOpen}
+        existing={allCategories}
+        onClose={() => setCategoryDialogOpen(false)}
+        onSaved={(saved) => {
+          setAllCategories((prev) => [...prev, saved]);
+          setCategories((prev) => [...prev, saved].sort((a, b) => a.sort_order - b.sort_order));
+          setExpanded((prev) => new Set(prev).add(saved.id));
+          setCategoryDialogOpen(false);
         }}
         styles={styles}
       />
@@ -600,6 +630,186 @@ function ItemEditorDialog({
               ) : (
                 <Text style={styles.primaryButtonText}>{state.mode === 'new' ? t('create') : t('saveWithIcon')}</Text>
               )}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={saving}>
+              <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Neue Kategorie
+// ---------------------------------------------------------------------------
+
+const MENU_GROUPS: { group: MenuGroup; label: StringKey }[] = [
+  { group: 'essen', label: 'groupEssen' },
+  { group: 'getraenke', label: 'groupGetraenke' },
+  { group: 'nachspeisen', label: 'groupNachspeisen' },
+];
+
+const KITCHEN_STATIONS: KitchenStation[] = ['vorspeise', 'hauptspeise', 'barbecue'];
+
+// Legt eine neue Kategorie (= Menü-Button in der Bestellaufnahme) an. Essen geht an die
+// Küche (mit Station = Spalte auf dem Küchen-Screen), Getränke/Nachspeisen an die Bar.
+// sort_order: hinter alle bestehenden Kategorien desselben Geräts — Küche und Bar teilen
+// ihre Tickets ohnehin nach Station bzw. menu_group in Spalten auf, die neue Kategorie
+// steht also innerhalb ihrer Spalte zuletzt. name_de wird wie in seed.sql klein
+// gespeichert (Anzeige per titleCase, Emoji-Zuordnung per Kleinschreibung).
+function CategoryEditorDialog({
+  visible,
+  existing,
+  onClose,
+  onSaved,
+  styles,
+}: {
+  visible: boolean;
+  existing: Category[];
+  onClose: () => void;
+  onSaved: (category: Category) => void;
+  styles: AdminStyles;
+}) {
+  const { lang, t } = useI18n();
+  const [nameDe, setNameDe] = useState('');
+  const [nameHanzi, setNameHanzi] = useState('');
+  const [group, setGroup] = useState<MenuGroup>('essen');
+  const [station, setStation] = useState<KitchenStation>('hauptspeise');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [wasVisible, setWasVisible] = useState(false);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (visible) {
+      setNameDe('');
+      setNameHanzi('');
+      setGroup('essen');
+      setStation('hauptspeise');
+      setSaving(false);
+      setError(null);
+    }
+  }
+
+  if (!visible) return null;
+
+  const isKitchen = group === 'essen';
+
+  async function save() {
+    const trimmedDe = nameDe.trim().toLowerCase();
+    if (!trimmedDe) {
+      setError(t('errNameRequired'));
+      return;
+    }
+    if (existing.some((c) => c.name_de.trim().toLowerCase() === trimmedDe)) {
+      setError(t('errCategoryDuplicate'));
+      return;
+    }
+    const targetDevice = isKitchen ? 'kitchen' : 'bar';
+    const maxSort = existing
+      .filter((c) => c.target_device === targetDevice)
+      .reduce((max, c) => Math.max(max, c.sort_order), 0);
+
+    setSaving(true);
+    setError(null);
+    const { data, error: insertError } = await supabase
+      .from('categories')
+      .insert({
+        name_de: trimmedDe,
+        name_hanzi: nameHanzi.trim() || null,
+        menu_group: group,
+        target_device: targetDevice,
+        sort_order: maxSort + 1,
+        kitchen_station: isKitchen ? station : null,
+      })
+      .select()
+      .single();
+    setSaving(false);
+
+    if (insertError || !data) {
+      const message = insertError?.message ?? t('errSaveFailed');
+      setError(message.includes('duplicate') || message.includes('unique') ? t('errCategoryDuplicate') : message);
+      return;
+    }
+    onSaved(data as Category);
+  }
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={styles.modalCard}>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalEmoji}>✨ {categoryEmoji(nameDe, group)}</Text>
+            <Text style={styles.modalTitle}>{t('newCategoryTitle')}</Text>
+
+            <Text style={styles.fieldLabel}>{t('fieldMenuGroup')}</Text>
+            <View style={styles.choiceRow}>
+              {MENU_GROUPS.map(({ group: g, label }) => (
+                <TouchableOpacity
+                  key={g}
+                  style={[styles.choiceChip, group === g && styles.choiceChipActive]}
+                  onPress={() => setGroup(g)}
+                >
+                  <Text style={[styles.choiceChipText, group === g && styles.choiceChipTextActive]}>{t(label)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {isKitchen && (
+              <>
+                <Text style={styles.fieldLabel}>{t('fieldKitchenStation')}</Text>
+                <View style={styles.choiceRow}>
+                  {KITCHEN_STATIONS.map((s) => (
+                    <TouchableOpacity
+                      key={s}
+                      style={[styles.choiceChip, station === s && styles.choiceChipActive]}
+                      onPress={() => setStation(s)}
+                    >
+                      <Text style={[styles.choiceChipText, station === s && styles.choiceChipTextActive]}>
+                        {SECTION_META[s].icon} {sectionLabel(s, lang)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+            <Text style={styles.choiceHint}>
+              {isKitchen
+                ? t('categoryGoesToKitchen')
+                : t('categoryGoesToBar', { column: SECTION_META[group === 'nachspeisen' ? 'nachspeisen' : 'getraenke'].label })}
+            </Text>
+
+            <Text style={styles.fieldLabel}>{t('fieldCategoryNameDe')}</Text>
+            <TextInput
+              style={styles.input}
+              value={nameDe}
+              onChangeText={setNameDe}
+              placeholder={isKitchen ? 'z.B. Reisgerichte' : 'z.B. Smoothies'}
+              placeholderTextColor={styles.placeholder.color as string}
+              autoFocus
+            />
+            {isKitchen && (
+              <>
+                <Text style={styles.fieldLabel}>{t('fieldCategoryNameHanzi')}</Text>
+                <TextInput
+                  style={styles.input}
+                  value={nameHanzi}
+                  onChangeText={setNameHanzi}
+                  placeholder="z.B. 米饭"
+                  placeholderTextColor={styles.placeholder.color as string}
+                />
+              </>
+            )}
+
+            {error && <Text style={styles.errorText}>{error}</Text>}
+            <TouchableOpacity
+              style={[styles.primaryButton, (saving || !nameDe.trim()) && styles.primaryButtonDisabled]}
+              onPress={save}
+              disabled={saving || !nameDe.trim()}
+            >
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>{t('create')}</Text>}
             </TouchableOpacity>
             <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={saving}>
               <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
@@ -943,6 +1153,30 @@ const createStyles = (colors: ThemeColors) =>
     optionPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 },
     optionName: { flex: 1, fontSize: 14, color: colors.text },
     optionPriceInput: { width: 96, textAlign: 'right', fontWeight: '700' },
+    // Neue Kategorie
+    newCategoryButton: {
+      borderWidth: 1.5,
+      borderStyle: 'dashed',
+      borderColor: colors.accent,
+      borderRadius: 14,
+      paddingVertical: 12,
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    newCategoryButtonText: { fontSize: 15, fontWeight: '800', color: colors.accent },
+    choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    choiceChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: 1.5,
+      borderColor: 'transparent',
+    },
+    choiceChipActive: { backgroundColor: colors.accentSurface, borderColor: colors.accent },
+    choiceChipText: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+    choiceChipTextActive: { color: colors.accent },
+    choiceHint: { fontSize: 12, color: colors.textMuted, marginTop: 6 },
     // Protokoll
     logHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
     logRetention: { flex: 1, fontSize: 12, color: colors.textMuted, lineHeight: 17 },

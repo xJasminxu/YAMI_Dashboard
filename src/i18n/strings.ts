@@ -258,6 +258,18 @@ export const STRINGS = {
   discountTotal: { de: "🏷️ Rabatte gesamt ({n} Tage): {sum}", zh: "🏷️ 折扣总额（{n} 天）：{sum}" },
   noLogEntries: { de: "Keine Einträge in den letzten {n} Tagen.", zh: "最近 {n} 天没有记录。" },
   positionsCount: { de: "{n} Positionen", zh: "{n} 项" },
+  newCategory: { de: "＋ Neue Kategorie", zh: "＋ 新增分类" },
+  newCategoryTitle: { de: "Neue Kategorie", zh: "新增分类" },
+  fieldCategoryNameDe: { de: "Name (Deutsch) *", zh: "德文名称 *" },
+  fieldCategoryNameHanzi: { de: "Name (Hanzi) — für die Küche", zh: "中文名称 — 厨房用" },
+  fieldMenuGroup: { de: "Bereich in der Bestellung", zh: "点单页面中的区域" },
+  groupEssen: { de: "🍜 Essen", zh: "🍜 菜品" },
+  groupGetraenke: { de: "🥤 Getränke", zh: "🥤 Getränke" },
+  groupNachspeisen: { de: "🍨 Nachspeisen", zh: "🍨 Nachspeisen" },
+  fieldKitchenStation: { de: "Station in der Küche", zh: "厨房工位" },
+  categoryGoesToBar: { de: "Geht an die Bar (Spalte {column}).", zh: "发送到吧台（{column} 栏）。" },
+  categoryGoesToKitchen: { de: "Geht an die Küche, Spalte der gewählten Station.", zh: "发送到厨房，显示在所选工位栏。" },
+  errCategoryDuplicate: { de: "Eine Kategorie mit diesem Namen gibt es schon.", zh: "已有同名分类。" },
   // @end
 } satisfies Record<string, { de: string; zh: string }>;
 

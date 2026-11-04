@@ -165,6 +165,11 @@ Rolle des Geräts:
      erscheinen also nach dem nächsten Öffnen der Bestellung). Preisänderungen wirken wegen des
      Preis-Snapshots (`order_items.unit_price`) nicht auf bereits aufgenommene Bestellungen.
      Rabatt-Kategorie und "Diverses"-Sammelposten sind hier nicht editierbar.
+     "＋ Neue Kategorie" legt eine neue Kategorie (= Menü-Button) an: Bereich Essen →
+     Küche mit wählbarer Station (Vorspeise/Hauptspeise/Barbecue), Getränke/Nachspeisen →
+     Bar; `sort_order` = hinter alle Kategorien desselben Geräts, `name_de` klein
+     gespeichert wie in seed.sql. Braucht die insert-Policy auf `categories` (schema.sql).
+     Kategorien lassen sich im Admin nicht löschen/umbenennen.
    - **Protokoll:** `activity_log` — gelöschte Tische (🗑️ in der Tischübersicht, inkl. Liste
      der gelöschten Positionen), entfernte Einzelpositionen (Abrechnung) und angewendete
      Rabatte (🏷️ in Tischübersicht/Abrechnung), geschrieben über `lib/activityLog.ts`.

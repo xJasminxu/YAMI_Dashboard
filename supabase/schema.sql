@@ -283,6 +283,12 @@ create policy "allow all insert menu_items" on menu_items for insert with check 
 drop policy if exists "allow all update menu_items" on menu_items;
 create policy "allow all update menu_items" on menu_items for update using (true);
 
+-- Admin-Modus: neue Kategorien anlegen (＋ Neue Kategorie im Speisekarte-Tab). Nur
+-- insert — Kategorien werden im Admin nicht gelöscht (menu_items hängt per
+-- "on delete restrict" daran). Wie oben nur über die Admin-PIN im Client geschützt.
+drop policy if exists "allow all insert categories" on categories;
+create policy "allow all insert categories" on categories for insert with check (true);
+
 -- ---------------------------------------------------------------------------
 -- activity_log: Protokoll im Admin-Modus
 -- Hält fest, wer-was-wann an Geld-relevanten Stellen passiert ist: gelöschte Tische
