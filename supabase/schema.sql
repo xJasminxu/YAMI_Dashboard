@@ -187,6 +187,17 @@ alter table order_items add column if not exists paid_method text
 alter table order_items add column if not exists spice_level smallint
   check (spice_level between 1 and 3);
 
+-- Migration: "辣油 Chilliöl" war früher ein Extra im Auswahl-Dialog der Ramen. Schärfe wird
+-- jetzt ausschließlich über den Schärfegrad in der Bestellübersicht gewählt, deshalb das
+-- Extra aus allen bestehenden extra_options entfernen (idempotent, trifft danach nichts mehr).
+update menu_items
+set extra_options = (
+  select coalesce(jsonb_agg(e.value order by e.ord), '[]'::jsonb)
+  from jsonb_array_elements(extra_options) with ordinality as e(value, ord)
+  where e.value->>'name_de' <> 'Chilliöl'
+)
+where extra_options @> '[{"name_de": "Chilliöl"}]'::jsonb;
+
 -- ---------------------------------------------------------------------------
 -- Realtime: order_items und orders für Live-Updates auf Küche/Bar aktivieren.
 -- (In Supabase: Database → Replication → Tabellen zur "supabase_realtime"

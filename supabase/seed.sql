@@ -166,19 +166,19 @@ where category_id = (select id from categories where name_de = 'ramen')
 insert into menu_items (category_id, name_hanzi, name_de, item_code, price, variant_options, extra_options) values
   ((select id from categories where name_de = 'ramen'), '溏心蛋味噌拉面', 'Ajitama Miso Ramen', 'R1', 13.90,
     '[{"name_hanzi": "牛肉", "name_de": "Rind"}, {"name_hanzi": "鸡肉", "name_de": "Huhn"}]',
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
   ((select id from categories where name_de = 'ramen'), '天妇罗虾拉面', 'Ramen mit Garnelen Tempura', 'R2', 14.90, null,
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
   ((select id from categories where name_de = 'ramen'), '照烧鸡肉味噌拉面', 'Toriteri Miso Ramen', 'R3', 15.90, null,
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
   ((select id from categories where name_de = 'ramen'), '溏心蛋豚骨拉面', 'Ajitama Tonkotsu Ramen', 'R4', 13.90,
     '[{"name_hanzi": "牛肉", "name_de": "Rind"}, {"name_hanzi": "鸡肉", "name_de": "Huhn"}]',
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
   ((select id from categories where name_de = 'ramen'), '溏心蛋酱油拉面', 'Ajitama Shoyu Ramen', 'R5', 13.50,
     '[{"name_hanzi": "牛肉", "name_de": "Rind"}, {"name_hanzi": "鸡肉", "name_de": "Huhn"}]',
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]'),
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]'),
   ((select id from categories where name_de = 'ramen'), '素食豆腐拉面', 'Vegetarische Ramen mit Tofu', 'R6', 11.90, null,
-    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}, {"name_hanzi": "辣油", "name_de": "Chilliöl"}]')
+    '[{"name_hanzi": "溏心蛋", "name_de": "Ajitama Eier", "price": 2.00}, {"name_hanzi": "玉米", "name_de": "Mais", "price": 1.00}, {"name_hanzi": "炸虾", "name_de": "Ebi Fry (2 Stk)", "price": 3.10}, {"name_hanzi": "豆腐", "name_de": "Tofu (4 Stk)", "price": 1.80}]')
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   item_code = excluded.item_code,
