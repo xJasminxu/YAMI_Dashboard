@@ -424,8 +424,7 @@ set created_at = clock_timestamp()
 where category_id = (select id from categories where name_de = 'alkoholfreie getränke')
   and name_de in ('Litschi-Eismilch', 'Brasilianische Limonade', 'Yuzu-Limonade', 'Mango-Maracuja-Spritz');
 
--- Cocktails — einheitlich 7,80€ für alle Sorten laut Karte, außer den beiden Mojito-
--- Varianten unten (8,90€, eigener Preis laut Ansage).
+-- Cocktails — einheitlich 7,80€ für alle Sorten laut Karte.
 insert into menu_items (category_id, name_hanzi, name_de, price) values
   ((select id from categories where name_de = 'cocktails'), null, 'Rote Sangria', 7.80),
   ((select id from categories where name_de = 'cocktails'), null, 'Sangria de Cava', 7.80),
@@ -437,12 +436,17 @@ insert into menu_items (category_id, name_hanzi, name_de, price) values
   ((select id from categories where name_de = 'cocktails'), null, 'Tiffany Lady', 7.80),
   ((select id from categories where name_de = 'cocktails'), null, 'Gin Basil Smash', 7.80),
   ((select id from categories where name_de = 'cocktails'), null, 'Lillet Wild Berry', 7.80),
-  ((select id from categories where name_de = 'cocktails'), null, 'Margarita', 7.80),
-  ((select id from categories where name_de = 'cocktails'), null, 'Erdbeer-Mojito', 8.90),
-  ((select id from categories where name_de = 'cocktails'), null, 'Lychee-Mojito', 8.90)
+  ((select id from categories where name_de = 'cocktails'), null, 'Margarita', 7.80)
 on conflict (category_id, name_de) do update set
   name_hanzi = excluded.name_hanzi,
   price = excluded.price;
+
+-- Erdbeer-Mojito/Lychee-Mojito wieder von der Karte genommen — falls schon in einer
+-- laufenden Datenbank eingespielt, hier per delete entfernen (ein reines Weglassen aus
+-- dem obigen insert würde bestehende Zeilen nicht anfassen, siehe on conflict oben).
+delete from menu_items
+where category_id = (select id from categories where name_de = 'cocktails')
+  and name_de in ('Erdbeer-Mojito', 'Lychee-Mojito');
 
 -- Bier — alle Sorten einheitlich 4,20
 insert into menu_items (category_id, name_hanzi, name_de, price) values

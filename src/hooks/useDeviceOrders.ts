@@ -58,7 +58,17 @@ export function useDeviceOrders(targetDevice: TargetDevice, options: UseDeviceOr
         `
       )
       .eq('menu_item.category.target_device', targetDevice)
+      // Zweites .order() als Tiebreaker (id) für Zeilen mit exakt gleichem created_at —
+      // z.B. mehrere Positionen derselben Bestellung, die im selben INSERT-Batch entstanden
+      // sind, teilen sich oft denselben Zeitstempel. Ohne festen Tiebreaker sortiert
+      // Postgres bei einem Gleichstand nicht garantiert stabil, und ein UPDATE (z.B. eine
+      // Position abhaken) kann die physische Zeilenreihenfolge ändern — beim nächsten
+      // Refetch kämen die Zeilen dann in anderer Reihenfolge zurück, obwohl sich an
+      // created_at nichts geändert hat. Das ließ Tickets (bzw. Positionen innerhalb eines
+      // Tickets) beim Abhaken scheinbar zufällig neu anordnen. Mit `id` als zweitem
+      // Sortierschlüssel ist die Zeilenreihenfolge bei jedem Refetch exakt reproduzierbar.
       .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
       .returns<OrderItemRow[]>();
 
     if (fetchError) {
@@ -80,7 +90,13 @@ export function useDeviceOrders(targetDevice: TargetDevice, options: UseDeviceOr
     }
 
     for (const group of byOrder.values()) {
-      group.items.sort((a, b) => a.menu_item.category.sort_order - b.menu_item.category.sort_order);
+      // id als Tiebreaker (siehe Kommentar bei der Query oben): zwei Positionen derselben
+      // Kategorie (gleicher sort_order) sollen ihre Reihenfolge innerhalb der Karte auch
+      // nach einem Refetch behalten, statt bei jedem Abhaken potenziell die Plätze zu
+      // tauschen.
+      group.items.sort(
+        (a, b) => a.menu_item.category.sort_order - b.menu_item.category.sort_order || a.id.localeCompare(b.id)
+      );
     }
 
     setOrders(Array.from(byOrder.values()));
