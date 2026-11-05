@@ -28,7 +28,7 @@ Arbeit, Fehleranfälligkeit, keine Übersicht für die Küche, keine chinesische
 - **State/Data-Fetching:** Supabase JS Client + Realtime-Channel-Subscriptions, kein
   zusätzliches State-Management-Framework nötig (Datenmenge ist klein).
 
-## Architekturprinzip: eine Codebase, fünf Rollen
+## Architekturprinzip: eine Codebase, sieben Rollen
 
 Kein separates Repo pro Gerät. Eine App, beim Start (oder per Einstellung) wählt man die
 Rolle des Geräts:
@@ -47,27 +47,40 @@ Rolle des Geräts:
    einem Abend besonders viel zu tun hat — die zuletzt eingestellte Aufteilung wird pro
    Gerät gemerkt. Zusätzlich lässt sich die Kartengröße über zwei "−"/"+"-Buttons neben der
    Stummschalt-Glocke umschalten, falls der Koch lieber mehr Gerichte auf einen Blick sehen
-   will statt möglichst großer, aus der Distanz lesbarer Schrift. Innerhalb einer Station
-   wandert eine einzelne abgehakte Position sofort von der Offen- in die Vergangene-
-   Bestellungen-Karte, statt erst wenn ALLE Positionen dieser Station fertig sind — eine
-   fertige Position blockiert so keinen Platz mehr in der Offen-Karte, den eine neu
-   eingehende Bestellung bräuchte. Dieselbe Bestellung kann dadurch gleichzeitig als Offen-
-   UND Vergangene-Bestellungen-Karte in derselben Station auftauchen (z.B. 2 von 3
-   Hauptspeisen schon fertig, die dritte noch offen). Vorher gab es dafür nur eine einzige
-   "Fertig"-Liste, die eine Bestellung erst zeigte, wenn wirklich ALLE Stationen komplett
-   fertig waren — eine fertige Vorspeise blieb so lange nirgends sichtbar. Ein dritter Tab
-   "Komplett" zeigt zusätzlich jedes Tisch-Ticket unfragmentiert als eine einzelne Karte mit
-   allen Positionen aller Stationen zusammen (jede Position mit ihrem eigenen Offen/Fertig-
-   Status) — für den Fall, dass jemand den kompletten Stand eines Tisches auf einen Blick
-   braucht, statt ihn aus den einzelnen Stationen-Spalten zusammenzusuchen. Ein vierter Tab
-   "Anzahl" fasst zusätzlich alle noch offenen
+   will statt möglichst großer, aus der Distanz lesbarer Schrift. Jede Position auf einem
+   Ticket hat rechts einen eigenen großen Haken-Button — abgehakt wird nur über ihn (nicht
+   mehr über die ganze Zeile, damit ein flüchtiges Antippen nicht die falsche Position
+   abhakt). Eine abgehakte Position bleibt auf ihrem Ticket stehen (grüner Haken, grau/
+   durchgestrichen), der Kartenkopf zeigt den Fortschritt ("✓ 2/3"), und ein breiter
+   "✓ 全部完成 · Alle fertig"-Button unten auf der Karte hakt alle restlichen Positionen auf
+   einmal ab. Gleiche Portionen einer Bestellung (gleiches Gericht, Variante, Extras, Notiz und
+   Status) stehen als EINE Zeile mit Mengenangabe davor da ("3× R1 · 豚骨拉面", "2× Piña
+   Colada" — ab 2× in Akzentfarbe, `groupItems` in `DeviceTicketBoard.tsx`, gilt für Küche
+   und Bar); ihr Haken hakt alle Portionen der Zeile auf einmal ab. Abgehakte und offene
+   Portionen desselben Gerichts stehen als getrennte Zeilen da. Erst wenn ALLE Positionen eines Tickets in einer Station abgehakt sind, wandert
+   das ganze Ticket (für diese Station) in den Tab "Vergangene Bestellungen" — dort lässt
+   sich eine Position per erneutem Antippen ihres Hakens zurück auf "offen" setzen, das
+   Ticket kehrt dann in den "Offen"-Tab zurück. (Frühere Varianten: einzelne abgehakte
+   Positionen wanderten sofort als eigene Karte nach "Vergangene Bestellungen", und ein
+   zusätzlicher Tab "Komplett" zeigte jedes Tisch-Ticket unfragmentiert — beides wurde
+   zugunsten der einfacheren Haken-auf-dem-Ticket-Logik entfernt.) Ein dritter Tab "Anzahl"
+   fasst zusätzlich alle noch offenen
    Positionen jeder Station zu einer nach Menge sortierten Stückzahl-Liste zusammen (z.B.
    "5× Gyoza") statt einzelner Ticket-Karten, gruppiert nach Gericht + Variante (Extras
    fließen nicht mit ein) — damit die Küche bei vielen gleichen Bestellungen (z.B. mehrere
    Gyoza-Bestellungen gleichzeitig) direkt in einem Rutsch nachbraten kann, ohne selbst über
    die Ticket-Karten zu zählen. Abgehakt wird weiterhin nur über die Ticket-Karten im
-   "Offen"-Tab (oder im "Komplett"-Tab), der "Anzahl"-Tab selbst ist reine Zähl-Hilfe ohne
-   Tipp-Interaktion.
+   "Offen"-Tab, der "Anzahl"-Tab selbst ist reine Zähl-Hilfe ohne Tipp-Interaktion.
+   **Handy-Ansicht der Küche:** Auf einem Handy (kürzeste Bildschirmseite < 600dp,
+   `hooks/useIsPhone.ts`, gilt also auch im Querformat) rendert `DeviceTicketBoard` statt
+   der drei Spalten nebeneinander `PhoneKitchenBoard`: kompakte Tab-Leiste (待做/已完成/数量,
+   nur Glocke, keine "−"/"+"-Kartengröße), darunter eine Stationen-Leiste als Filter
+   (全部 | 小吃 | 主食 | 烤肉 mit Zähler je Station, zuletzt gewählte Station pro Gerät
+   gemerkt, AsyncStorage `yami:phone-kitchen-station`) und EINE Spalte volle Breite. "全部"
+   zeigt alle Stationen untereinander mit fixierten Abschnitts-Überschriften (leere
+   Stationen ausgeblendet). Karten sind dieselben wie auf dem Tablet (`TicketCard`, gleiches
+   Abhaken/Wischen/"全部完成"), nur mit eigenen Größen (`createPhoneStyles`). Tablet/Laptop
+   und die Bar sind davon nicht betroffen.
 3. **Bar** — zeigt nur Items mit `target_device = 'bar'`. Statt eines umschaltbaren
    "Fertig"-Tabs stehen hier immer drei Spalten nebeneinander: Getränke | Nachspeisen |
    Vergangene Bestellungen (siehe `categories.menu_group`), aus demselben
@@ -81,25 +94,49 @@ Rolle des Geräts:
    weiterhin Ticket-Karten.
 4. **Status** (optional, für Bedienungen) — Übersicht aller **offenen** Tische mit
    Fortschritt (z.B. "Tisch 4: 2/5 fertig"), gespeist aus denselben Realtime-Daten wie
-   Küche/Bar.
+   Küche/Bar. Jede Tischkarte teilt die noch offenen Positionen nach Bereich auf (🥟 Vorspeise
+   · 🍜 Hauptspeise · 🥩 BBQ · 🍹 Getränke · 🍨 Nachspeisen, `lib/sections.ts`), mit Mengen
+   ("2× …"), Fortschrittsbalken und Wartezeit seit der ältesten offenen Position (ab 20 min
+   gelb, ab 30 min rot). Sortierung standardmäßig nach längster Wartezeit (umschaltbar auf
+   Tischnummer), Filter-Kacheln oben zeigen je Bereich die Zahl offener Portionen und
+   filtern auf Tische mit offenen Positionen dieses Bereichs. Oben ein "🛎️ Abholbereit"-
+   Streifen mit den zuletzt fertig gewordenen KÜCHEN-Gerichten der letzten 30 min — die
+   frühere Bar-Variante ("Zuletzt zubereitet (Bar)") wurde bewusst entfernt. Das Tisch-
+   Detail (Antippen einer Karte) nutzt dieselbe Bereichs-Aufteilung.
 5. **Tischübersicht** (für Bedienungen) — Übersicht **aller** Tische mit Bestellungen von
    heute (auch bereits fertige, anders als Status — die werden ja gerade erst abgerechnet).
+   Zwei Tabs: "🪑 Aktuell" (offene Tische) und "🕓 Vergangene Tische" (per "Tisch
+   abschließen" geschlossen, siehe unten). Oben im Aktuell-Tab steht eine Kachel-Übersicht
+   aller belegten Tische (Tischnummer + Fortschritt, grün = alles raus, orange = noch etwas
+   offen; Antippen öffnet die Abrechnung) — dort stand früher der Tagesumsatz, der jetzt
+   einen eigenen Menüpunkt hat (siehe 6.).
    Tippen auf einen Tisch öffnet die Bestellübersicht mit vorläufiger Abrechnung: einzelne
    Positionen sind per Checkbox auswählbar (z.B. für getrennte Rechnungen), die Summe der
    Auswahl wird live berechnet. Rein zur Orientierung für die Bedienung — es wird nichts
-   gebucht oder gespeichert; die verbindliche Rechnung druckt weiterhin die Kasse. Zwei
-   Wege, Positionen auf einen anderen Tisch umzubuchen (z.B. bei Tischwechsel oder falscher
-   Tischnummer): "Tisch wechseln / zusammenführen" verschiebt den GANZEN Tisch (alle seine
-   offenen Bestellungen, per `orders.table_id`) auf eine andere Tischnummer — hat das Ziel
-   schon eine offene Bestellung, landen beide Tische automatisch unter derselben `table_id`
-   und werden so zu einer gemeinsamen Rechnung zusammengeführt. "Verschieben" neben dem
-   Bezahlt-Button betrifft dagegen nur die per Checkbox ausgewählten EINZELNEN Positionen
-   (per `order_items.order_id`, auf die offene Bestellung des Zieltisches umgehängt bzw. auf
-   eine neu angelegte, falls dort noch keine läuft) — für den Fall, dass nur ein Teil der
-   Gäste den Tisch wechselt oder nur eine einzelne Position falsch zugeordnet wurde; der Rest
-   des Ursprungstisches bleibt unverändert stehen. Beide Wege legen bei einer noch nie
-   benutzten Zieltischnummer automatisch eine neue `tables`-Zeile an (dieselbe Upsert-Logik
-   wie beim Absenden einer Bestellung in OrderScreen.tsx).
+   gebucht oder gespeichert; die verbindliche Rechnung druckt weiterhin die Kasse. Jede
+   offene Tischkarte in der Übersicht hat unten eine Icon-Leiste (Icons statt Text,
+   Beschriftung nur als accessibilityLabel; dezente Feather-Linien-Icons aus
+   `@expo/vector-icons` statt Emojis — im Text unten stehen zur Kürze weiter die Emojis): ➕ neue Bestellung für diesen Tisch, 🔀 Tisch
+   wechseln / zusammenführen, ✂️ einzelne Positionen verschieben, 🗑️ Bestellungen löschen
+   (PIN). 🔀 und ✂️ leben bewusst in der Übersicht (nicht mehr in der Abrechnung), weil man
+   dafür mehrere Tische gleichzeitig im Blick braucht; beide nutzen denselben Zielauswahl-
+   Dialog: alle anderen offenen Tische als antippbare 🔗-Kacheln (= zusammenführen) plus ein
+   Nummernfeld für einen freien Tisch. 🏷️ bucht einen Rabatt direkt auf den offenen Tisch
+   (`components/DiscountDialog.tsx` + `lib/discount.ts`: Betrag frei oder per 10/15/20/50 %-
+   Kachel aus der Tischsumme, Beschreibung optional) — derselbe Dialog steckt auch als
+   kleines 🏷️-Icon oben rechts in der Abrechnung (neben der Gesamtsumme). In der Abrechnung
+   stehen offene Positionen oben, bereits bezahlte darunter. In der Bestellaufnahme gibt es seit
+   Kurzem keinen Rabatt-Button mehr. Technisch ist ein Rabatt weiterhin eine `order_items`-
+   Zeile auf dem Item der Rabatt-Kategorie (`categories.is_discount`) mit negativem
+   `unit_price` und der Beschreibung in `variant_de`, direkt als "fertig" angelegt. 🔀 verschiebt den GANZEN Tisch (alle seine offenen
+   Bestellungen, per `orders.table_id`) — hat das Ziel schon eine offene Bestellung, landen
+   beide Tische unter derselben `table_id` und werden so zu einer gemeinsamen Rechnung
+   zusammengeführt. ✂️ zeigt im Dialog alle Positionen des Tisches zum Antippen und hängt nur
+   die ausgewählten EINZELNEN Positionen um (per `order_items.order_id`, auf die offene
+   Bestellung des Zieltisches bzw. eine neu angelegte) — der Rest des Ursprungstisches bleibt
+   stehen. Beide Wege legen bei einer noch nie benutzten Zieltischnummer automatisch eine neue
+   `tables`-Zeile an (dieselbe Upsert-Logik wie beim Absenden einer Bestellung in
+   OrderScreen.tsx).
    "Vergangene Tische" (bereits per "Tisch abschließen" geschlossene Bestellungen, siehe
    Status-Workflow unten) werden NICHT pro Tischnummer zu einer Sammelkarte zusammengefasst
    — wird derselbe Tisch am selben Tag mehrfach besetzt und jeweils abgeschlossen (z.B.
@@ -112,7 +149,53 @@ Rolle des Geräts:
    dient als Gruppierungsschlüssel (Tischnummer + closed_at) statt nur der Tischnummer
    allein.
 
+6. **Umsatz** — eigener Menüpunkt (`RevenueScreen.tsx`, früher ein Kasten oben in der
+   Tischübersicht): Tagesumsatz über alle heutigen Positionen, offene wie abgeschlossene
+   Tische, aufgeschlüsselt nach Zahlungsart (Karte / Bargeld / nicht als bezahlt markiert),
+   offenen vs. abgeschlossenen Tischen und Küche vs. Bar. Wird erst durch den Tagesabschluss
+   geleert. Reine Orientierung — die verbindlichen Zahlen liefert die Kasse.
+
+7. **Admin** — PIN-geschützt (`ADMIN_PIN`, `AdminScreen.tsx`), zwei Tabs:
+   - **Speisekarte:** Gerichte je Kategorie anlegen (＋), Namen/Hanzi/Code/Preis ändern (✏️,
+     bei Gerichten mit Varianten/Extras auch deren Einzelpreise), Gerichte entfernen (🗑️) und
+     wiederherstellen (↩️). "Entfernen" setzt nur `menu_items.active = false` — ein echtes
+     Löschen scheitert am `on delete restrict` bereits bestellter `order_items`, und die sollen
+     in Abrechnung/Protokoll ihren Namen behalten. Ausgeblendete Gerichte verschwinden aus der
+     Bestellaufnahme (`useMenu` lädt nur `active = true`, einmalig beim Öffnen — Änderungen
+     erscheinen also nach dem nächsten Öffnen der Bestellung). Preisänderungen wirken wegen des
+     Preis-Snapshots (`order_items.unit_price`) nicht auf bereits aufgenommene Bestellungen.
+     Rabatt-Kategorie und "Diverses"-Sammelposten sind hier nicht editierbar.
+     "＋ Neue Kategorie" legt eine neue Kategorie (= Menü-Button) an: Bereich Essen →
+     Küche mit wählbarer Station (Vorspeise/Hauptspeise/Barbecue), Getränke/Nachspeisen →
+     Bar; `sort_order` = hinter alle Kategorien desselben Geräts, `name_de` klein
+     gespeichert wie in seed.sql. Braucht die insert-Policy auf `categories` (schema.sql).
+     Kategorien lassen sich im Admin nicht löschen/umbenennen.
+   - **Protokoll:** `activity_log` — gelöschte Tische (🗑️ in der Tischübersicht, inkl. Liste
+     der gelöschten Positionen), entfernte Einzelpositionen (Abrechnung) und angewendete
+     Rabatte (🏷️ in Tischübersicht/Abrechnung), geschrieben über `lib/activityLog.ts`.
+     Einträge werden nach **3 Tagen endgültig gelöscht**: serverseitig per stündlichem
+     pg_cron-Job (siehe schema.sql), zusätzlich räumt der Client beim Schreiben eines
+     Eintrags und beim Öffnen des Protokolls auf; die RLS-Policy erlaubt Löschen nur für
+     abgelaufene Einträge. Das Protokoll ist unabhängig vom Tagesabschluss.
+
 Rollenwahl bestimmt nur Filter + Sortierung + UI-Layout, nicht das Datenmodell.
+
+## Sprache (Deutsch / Chinesisch)
+
+Umschalter "中文" / "DE" rechts in jeder App-Leiste (neben Hell/Dunkel), gemerkt pro Gerät
+(AsyncStorage `yami:language`, Standard Deutsch). Alle Oberflächentexte liegen in
+`src/i18n/strings.ts` (je Schlüssel `de` + `zh`), Zugriff über `useI18n().t(key, params)`.
+Regeln:
+- **Bar bleibt immer Deutsch** — die Bar-Ansicht selbst (`DeviceTicketBoard` mit
+  `targetDevice='bar'` übersetzt fest auf `de`), der Menüpunkt "Bar" sowie alles zu
+  Getränken/Nachspeisen (Gruppen-Überschriften in der Bestellung, Status-Bereiche,
+  Kategorienamen ohne Hanzi) — dort wird auf Deutsch gearbeitet.
+- **Küche:** Gerichtenamen auf den Tickets bleiben immer zweisprachig (Hanzi + Deutsch). Die
+  restliche Küchen-Oberfläche ist auf Chinesisch rein chinesisch (Tabs, Stationen 小吃/主食/
+  烤肉, "{n}号桌", "✓ 全部完成"); auf Deutsch bleibt sie wie bisher zweisprachig beschriftet.
+- Überall sonst folgt die Oberfläche der gewählten Sprache; Gerichtenamen kommen weiterhin aus
+  der Datenbank (Hanzi + Deutsch, wo vorhanden). Gespeicherte Texte (Rabatt-Beschreibungen,
+  Protokoll-Einträge, Notizen) werden nicht übersetzt.
 
 ## Kategorien (Menü-Buttons in der Bestellaufnahme)
 
@@ -194,37 +277,26 @@ Spalte direkt daneben, damit man dafür nicht extra umschalten muss. Alle offene
 (`columns={2}` in `TicketList`) statt einer einzelnen tief scrollenden Liste, damit auf
 einen Blick mehr offene Tickets sichtbar sind. Bei der Bar fällt eine Karte aus ihrer Spalte
 raus, sobald alle Positionen *dieser* Spalte abgehakt sind (`itemsMatching`) — unabhängig
-davon, ob die Bestellung insgesamt (in einer anderen Spalte) noch offen ist. Bei der Küche
-geht das seit Kurzem noch granularer: dort fällt eine EINZELNE Position bereits beim
-Abhaken sofort aus der Offen-Karte raus, nicht erst wenn alle Positionen dieser Station
-fertig sind (`stationOpenOnly`), damit eine bereits fertige Position keinen Platz in der
-Offen-Karte blockiert, den eine neu eingehende Bestellung bräuchte. Auch der "Vergangene
-Bestellungen"-Tab ist bei der Küche in dieselben drei Stationen-Spalten aufgeteilt (nicht
-mehr nur der "Offen"-Tab): sobald eine einzelne Position einer Station abgehakt wird,
-erscheint sie im selben Moment als EIGENE Karte in der Vergangene-Bestellungen-Spalte
-derselben Station (`stationDoneItems`) — nicht zusammen mit anderen fertigen Positionen
-derselben Bestellung in einer Sammelkarte —, sortiert nach individueller Abhak-Zeit
-(neueste zuerst), unabhängig vom Fortschritt der übrigen Positionen dieser Station oder
-anderer Stationen. Grund für die Aufsplittung in einzelne Karten statt einer Sammelkarte:
-Köche haken gelegentlich aus Versehen die falsche Position ab — als eigene, ganz oben
-stehende Karte ist sofort erkennbar, welche das war, statt sie erst in einer Sammelkarte
-mit mehreren Positionen suchen zu müssen, um sie durch erneutes Antippen zurück auf "offen"
-zu setzen. Dieselbe Bestellung kann so gleichzeitig z.B. unter "Vergangene Bestellungen →
-Hauptspeise" (die schon fertige Position, als eigene Karte) UND "Offen → Hauptspeise" (die
-noch offene Position derselben Bestellung) auftauchen — beide siehe `DeviceTicketBoard.tsx`.
+davon, ob die Bestellung insgesamt (in einer anderen Spalte) noch offen ist. Die Küche
+verhält sich pro Station genauso (`itemsMatching`): abgehakte Positionen bleiben mit grünem
+Haken auf dem Ticket stehen, bis alle Positionen dieser Station fertig sind. Dann erscheint
+das Ticket als Ganzes im "Vergangene Bestellungen"-Tab derselben Station
+(`stationDoneTickets`), sortiert nach Fertig-Zeit (neueste zuerst). Dieselbe Bestellung kann
+so z.B. unter "Vergangene Bestellungen → Vorspeise" (Vorspeisen fertig) UND "Offen →
+Hauptspeise" (Ramen noch in Arbeit) auftauchen — beide siehe `DeviceTicketBoard.tsx`.
 
 ## Status-Workflow
 
 1. Bedienung erstellt Bestellung → Zeilen in `order_items` mit `status = 'offen'`.
 2. Küche/Bar sehen live (Realtime-Subscription) neue Zeilen, gefiltert nach `target_device`.
-3. Tippen auf ein Item → `status = 'fertig'` (durchgestrichen dargestellt), `done_at` gesetzt.
+3. Tippen auf den Haken-Button einer Position → `status = 'fertig'` (grüner Haken,
+   durchgestrichen), `done_at` gesetzt; erneutes Tippen setzt zurück auf `offen`.
 4. Sobald alle Items einer Bestellung **für das jeweilige Gerät** fertig sind, wandert die
    Bestellung im UI (nicht in der DB als separate Tabelle) aus "offen" in "fertig" und landet
-   in "Vergangene Bestellungen (Bar)". Bei der Küche passiert dieser Wechsel pro Position
-   einzeln (siehe Mehr-Spalten-Ansicht oben): sobald EINE Position einer Bestellung
-   abgehakt wird, erscheint genau diese Position sofort in "Vergangene Bestellungen →
-   [Station]", auch wenn andere Positionen derselben Station oder derselben Bestellung noch
-   offen sind. Diese Berechnung passiert client-seitig aus dem Realtime-Stream — kein
+   in "Vergangene Bestellungen". Bei der Küche passiert dieser Wechsel pro Station: ein
+   Ticket wandert in "Vergangene Bestellungen → [Station]", sobald alle seine Positionen
+   dieser Station abgehakt sind; bis dahin bleiben abgehakte Positionen mit grünem Haken auf
+   dem Ticket in "Offen" stehen. Diese Berechnung passiert client-seitig aus dem Realtime-Stream — kein
    Extra-Feld/Trigger nötig, außer man will Performance später optimieren (dann
    `kitchen_done`/`bar_done` Spalten auf `orders` pflegen, die per Trigger gesetzt werden,
    sobald alle zugehörigen `order_items` fertig sind).
@@ -256,10 +328,21 @@ Siehe `supabase/schema.sql` für die vollständige Definition. Kurzfassung:
   (optionale Extras mit +/- Menge im selben Dialog, z.B. bei Ajitama-Ramen)
 - `tables` — number
 - `orders` — table_id, created_at
+- `activity_log` — kind (table_deleted/item_deleted/discount_applied), table_number, summary,
+  amount, details, created_at — Admin-Protokoll, nach 3 Tagen automatisch gelöscht
 - `order_items` — order_id, menu_item_id, status (offen/fertig), variant_hanzi/variant_de
   (gewählte Variante), extras (gewählte Extras + Menge + Preis), unit_price (Preis-Snapshot
   der Grundposition zum Bestellzeitpunkt, siehe unten), note (Freitext der Bedienung),
-  created_at, done_at
+  spice_level (1 mild / 2 scharf / 3 sehr scharf, null = nicht scharf), created_at, done_at
+
+Schärfegrad: einstellbar NUR in der aufklappbaren Bestellübersicht (Warenkorb-Panel in
+`OrderScreen.tsx`), per dreiteiliger Leiste Mild | Scharf | Sehr scharf (微辣/辣/特辣) unter
+jeder Hauptspeisen-Zeile (`kitchen_station = 'hauptspeise'`, ohne "Diverses", `lib/spice.ts`).
+Erneutes Antippen des gewählten Grads setzt zurück auf nicht scharf. Der Grad ist Teil des
+Warenkorb-Schlüssels (unterschiedlich scharfe Portionen = getrennte Zeilen). Auf den
+Küchen-Tickets steht er hinter dem Gerichtenamen ("豚骨拉面 · 🌶️🌶️ 辣").
+Schärfe gehört deshalb NICHT in `variant_options` (keine Varianten wie "Rind scharf" /
+"Rind nicht scharf"); die Migration am Ende von `supabase/seed.sql` entfernt solche Varianten.
 
 Modifier-Konzept (Varianten + Extras): manche `menu_items` verlangen beim Bestellen eine
 Dialog-Auswahl statt direkt in den Warenkorb zu wandern. `variant_options` ist eine Pflicht-

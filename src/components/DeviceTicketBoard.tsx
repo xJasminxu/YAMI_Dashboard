@@ -1,17 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, PanResponder, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import type { PanResponderInstance } from 'react-native';
+import { ActivityIndicator, FlatList, Image, PanResponder, SectionList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import type { ImageStyle, PanResponderInstance, TextStyle, ViewStyle } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDeviceOrders, type DeviceOrderItem, type GroupedOrder } from '../hooks/useDeviceOrders';
 import { useNewOrderChime } from '../hooks/useNewOrderChime';
+import { useIsPhone } from '../hooks/useIsPhone';
 import type { OrderItemStatus, TargetDevice } from '../types/database';
 import type { ThemeColors } from '../theme/colors';
 import { useTheme } from '../theme/ThemeContext';
 import { useThemedStyles } from '../theme/useThemedStyles';
+import { translate, useI18n } from '../i18n/LanguageContext';
+import type { StringKey } from '../i18n/strings';
+import { spiceEmojis, spiceSuffix } from '../lib/spice';
 
-type Tab = 'offen' | 'fertig' | 'anzahl' | 'komplett';
-type BoardStyles = ReturnType<typeof createStyles>;
+// Übersetzer für die Board-Oberfläche: Bar immer Deutsch, Küche nach gewählter Sprache
+// (Gerichtenamen auf den Tickets bleiben unabhängig davon zweisprachig).
+type BoardT = (key: StringKey, params?: Record<string, string | number>) => string;
+
+type Tab = 'offen' | 'fertig' | 'anzahl';
+// Bewusst als "irgendein Style je Schlüssel" statt der exakten Literal-Typen aus
+// StyleSheet.create — sonst ließe sich die Handy-Variante (createPhoneStyles, z.B.
+// emptyBanner mit flexDirection 'column' statt 'row') nicht an dieselben Komponenten geben.
+type BoardStyles = { [K in keyof ReturnType<typeof createStyles>]: ViewStyle & TextStyle & ImageStyle };
 
 // Zeigt sich, wenn im "Offen"-Tab (Küche oder Bar) gerade nichts zu tun ist — links
 // der Spruch, rechts das Bild, siehe EmptyBoardBanner unten.
@@ -36,6 +47,19 @@ function largeModeStorageKey(targetDevice: TargetDevice) {
 function stationRatiosStorageKey(targetDevice: TargetDevice) {
   return `yami:station-ratios:${targetDevice}`;
 }
+
+// Handy-Ansicht der Küche (siehe PhoneKitchenBoard): zuletzt gewählter Stationen-Filter,
+// damit z.B. ein Handy, das fest am Grill liegt, direkt wieder auf "烤肉" steht.
+const PHONE_STATION_STORAGE_KEY = 'yami:phone-kitchen-station';
+type PhoneStation = 'all' | 'vorspeise' | 'hauptspeise' | 'barbecue';
+const PHONE_STATIONS: PhoneStation[] = ['all', 'vorspeise', 'hauptspeise', 'barbecue'];
+const PHONE_STATION_SLOT = { vorspeise: 'primary', hauptspeise: 'secondary', barbecue: 'tertiary' } as const;
+
+// Handy-Ansicht der Bar (siehe PhoneBarBoard): zuletzt gewählter Filter Alle/Getränke/
+// Nachspeisen, gleiches Prinzip wie PHONE_STATION_STORAGE_KEY bei der Küche.
+const PHONE_BAR_FILTER_STORAGE_KEY = 'yami:phone-bar-filter';
+type PhoneBarFilter = 'all' | 'getraenke' | 'nachspeisen';
+const PHONE_BAR_FILTERS: PhoneBarFilter[] = ['all', 'getraenke', 'nachspeisen'];
 
 // Standardbreiten, bevor zum ersten Mal gezogen wurde — spiegeln die bisherigen festen
 // flex-Werte: bei der Küche Vorspeise/Hauptspeise gleich breit, Barbecue schmaler (kurze
@@ -71,13 +95,12 @@ function cardBackgroundFor(colors: ThemeColors): Record<OrderProgress, object> {
   };
 }
 
-// Reduziert jede Bestellung auf die Positionen, die zum Prädikat passen — für die Bar
+// Reduziert jede Bestellung auf die Positionen, die zum Prädikat passen — für die Spalten
+// von Küche (Vorspeise/Hauptspeise/Barbecue, siehe categories.kitchen_station) und Bar
 // (Getränke/Nachspeisen, siehe categories.menu_group). Eine Karte behält dabei auch bereits
-// abgehakte Positionen (nur durchgestrichen) und fällt erst raus, sobald ALLE Positionen
-// DIESER Spalte abgehakt sind — die Bar hat (anders als die Küche seit Kurzem, siehe
-// stationOpenOnly unten) keine separate "einzelne Position sofort raus"-Logik, weil ihre
-// "Vergangene Bestellungen"-Spalte ohnehin nur ganze fertige Bestellungen zeigt (`done`,
-// siehe isBar-Zweig), nicht einzelne fertige Positionen.
+// abgehakte Positionen (grüner Haken + durchgestrichen) und fällt erst raus, sobald ALLE
+// Positionen DIESER Spalte abgehakt sind — dann landet sie als ganzes Ticket in
+// "Vergangene Bestellungen" (Küche: stationDoneTickets, Bar: `done`).
 function itemsMatching(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
   return orders
     .map((order) => ({
@@ -87,73 +110,56 @@ function itemsMatching(orders: GroupedOrder[], predicate: (item: DeviceOrderItem
     .filter((order) => order.items.some((item) => item.status === 'offen'));
 }
 
-// Wie itemsMatching, aber nur für die Küchen-Stationen-Spalten im "Offen"-Tab: behält je
-// Karte NUR die tatsächlich noch offenen Positionen (nicht wie itemsMatching auch bereits
-// abgehakte, die dort "nur" die Karte offen halten). Sobald eine einzelne Position
-// abgehakt wird, verschwindet SIE sofort aus der Offen-Karte — und taucht dank
-// stationDoneItems (siehe unten) im selben Moment als eigene Karte in der passenden
-// Vergangene-Bestellungen-Spalte auf — statt bis zur letzten Position derselben Station in der
-// Offen-Karte liegen zu bleiben und dort unnötig Platz zu blockieren, den eine neu
-// eingehende Bestellung bräuchte.
-function stationOpenOnly(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
-  return orders
-    .map((order) => ({
-      ...order,
-      items: order.items.filter((item) => item.status === 'offen' && predicate(item)),
-    }))
-    .filter((order) => order.items.length > 0);
-}
-
 // Zeitpunkt, an dem die letzte Position der Bestellung fertig markiert wurde — bestimmt
 // die Reihenfolge der "Vergangene Bestellungen"-Liste (neueste zuerst).
 function latestDoneAt(order: GroupedOrder): number {
   return order.items.reduce((latest, item) => Math.max(latest, item.done_at ? new Date(item.done_at).getTime() : 0), 0);
 }
 
-// Gegenstück zu stationOpenOnly für die "Vergangene Bestellungen"-Spalten der Küche: liefert
-// pro fertig abgehakter Position DIESER Station eine EIGENE Karte (nicht wie vorher alle
-// fertigen Positionen einer Bestellung zusammen in einer Karte) — jede Karte trägt weiterhin
-// Tisch/Zeit der ursprünglichen Bestellung, aber nur genau diese eine Position. Sortiert
-// nach dem individuellen done_at jeder Position (neueste zuerst), nicht nach dem spätesten
-// done_at einer ganzen Bestellung — sonst hätte eine um 10:05 abgehakte Position eine um
-// 10:00 abgehakte Position derselben Bestellung "mit nach oben gezogen", obwohl dazwischen
-// noch andere Bestellungen fertig wurden. Grund für die Aufsplittung: Köche haken
-// gelegentlich aus Versehen die falsche Position ab — steckte sie in einer Sammelkarte mit
-// mehreren Positionen, musste erst gesucht werden, welche der mehreren Positionen es war,
-// um sie durch erneutes Antippen zurück auf "offen" zu setzen. Als eigene, klar
-// abgegrenzte Karte ganz oben (dank Sortierung nach Zeit) ist sofort erkennbar, welche
-// Position das war. Läuft über `orders` (nicht nur `open`), da eine Bestellung, deren
-// Vorspeise komplett fertig ist, ggf. schon nicht mehr in `open` steckt, wenn auch die
-// restlichen Stationen fertig sind — die Position soll aber trotzdem gefunden werden.
-function stationDoneItems(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
-  const entries: GroupedOrder[] = [];
+// Gegenstück zu itemsMatching für die "Vergangene Bestellungen"-Spalten der Küche: ganze
+// Tickets (je Station), bei denen ALLE Positionen dieser Station abgehakt sind — neueste
+// zuerst. Eine abgehakte Position bleibt bis dahin auf ihrem Ticket in der Offen-Spalte
+// stehen (grüner Haken, durchgestrichen), statt einzeln in "Vergangene Bestellungen" zu
+// wandern — so sieht der Koch am Ticket selbst, was schon raus ist und was noch fehlt.
+// Erneutes Antippen des Hakens auf einem vergangenen Ticket setzt die Position zurück auf
+// "offen" und holt das Ticket damit wieder in die Offen-Spalte.
+function stationDoneTickets(orders: GroupedOrder[], predicate: (item: DeviceOrderItem) => boolean): GroupedOrder[] {
+  return orders
+    .map((order) => ({ ...order, items: order.items.filter(predicate) }))
+    .filter((order) => order.items.length > 0 && order.items.every((item) => item.status === 'fertig'))
+    .sort((a, b) => latestDoneAt(b) - latestDoneAt(a));
+}
 
-  for (const order of orders) {
-    for (const item of order.items) {
-      if (item.status !== 'fertig' || !predicate(item)) continue;
-      entries.push({
-        ...order,
-        // orderId ist normalerweise pro Bestellung eindeutig — hier bewusst pro Position
-        // (item.id), da jede Position jetzt ihre eigene Karte ist und React/FlatList einen
-        // pro Karte eindeutigen key braucht (siehe keyExtractor in TicketList).
-        orderId: item.id,
-        items: [item],
-      });
-    }
+// Eine Zeile auf dem Ticket = alle GLEICHEN Portionen einer Bestellung zusammen ("3×
+// Bibimbap Rind" statt drei einzelner Zeilen). order_items speichert jede Portion als eigene
+// Zeile (siehe OrderScreen.tsx submitOrder), gleich heißt hier: gleiches Gericht, gleiche
+// Variante, gleiche Extras, gleiche Notiz UND gleicher Status — abgehakte und offene
+// Portionen stehen also als getrennte Zeilen da (z.B. "2× Gyoza" offen, "1× Gyoza" fertig),
+// damit der Haken-Button eindeutig bleibt: er hakt alle Portionen seiner Zeile auf einmal
+// ab bzw. setzt sie zurück. Reihenfolge = erstes Auftreten (also weiterhin nach sort_order).
+interface ItemGroup {
+  key: string;
+  item: DeviceOrderItem; // repräsentative Portion für Name/Variante/Extras/Notiz
+  ids: string[];
+}
+
+function groupItems(items: DeviceOrderItem[]): ItemGroup[] {
+  const groups = new Map<string, ItemGroup>();
+  for (const item of items) {
+    const extrasKey = (item.extras ?? [])
+      .map((e) => `${e.name_de}x${e.quantity}`)
+      .sort()
+      .join('|');
+    const key = [item.menu_item.id, item.variant_de ?? '', extrasKey, item.note ?? '', item.spice_level ?? 0, item.status].join('::');
+    const group = groups.get(key);
+    if (group) group.ids.push(item.id);
+    else groups.set(key, { key, item, ids: [item.id] });
   }
-
-  return entries.sort((a, b) => latestDoneAt(b) - latestDoneAt(a));
+  return Array.from(groups.values());
 }
 
 function countOpenItems(orders: GroupedOrder[]): number {
   return orders.reduce((sum, order) => sum + order.items.filter((item) => item.status === 'offen').length, 0);
-}
-
-// Für die "erledigt"-Zähler der Vergangene-Bestellungen-Spalten — orders kommen hier
-// bereits aus stationDoneItems, alle enthaltenen Positionen sind also schon fertig, ein
-// Status-Filter wie bei countOpenItems ist daher nicht nötig.
-function countItems(orders: GroupedOrder[]): number {
-  return orders.reduce((sum, order) => sum + order.items.length, 0);
 }
 
 interface DishCount {
@@ -179,7 +185,9 @@ function aggregateOpen(orders: GroupedOrder[], predicate: (item: DeviceOrderItem
     for (const item of order.items) {
       if (item.status !== 'offen' || !predicate(item)) continue;
 
-      const variantLabel = item.variant_hanzi ?? item.variant_de ?? null;
+      // Schärfegrad zählt wie die Variante getrennt ("3× Ramen 🌶️🌶️"), da anders zubereitet.
+      const variantLabel =
+        [item.variant_hanzi ?? item.variant_de, spiceEmojis(item.spice_level)].filter(Boolean).join(' · ') || null;
       const key = `${item.menu_item.id}::${variantLabel ?? ''}`;
       const existing = byKey.get(key);
       if (existing) {
@@ -215,9 +223,15 @@ export default function DeviceTicketBoard({
   large?: boolean;
 }) {
   const { colors } = useTheme();
-  const styles = useThemedStyles(createStyles);
+  const { lang } = useI18n();
+  const uiLang = targetDevice === 'bar' ? 'de' : lang;
+  const bt: BoardT = (key, params) => translate(uiLang, key, params);
+  // Küche auf Deutsch behält die zweisprachige Beschriftung (Küchenpersonal spricht
+  // Chinesisch), auf Chinesisch rein chinesisch; Bar rein deutsch.
+  const completeAllLabel =
+    targetDevice === 'bar' ? '✓ Alle fertig' : lang === 'zh' ? '✓ 全部完成' : '✓ 全部完成 · Alle fertig';
   const cardBackground = useMemo(() => cardBackgroundFor(colors), [colors]);
-  const { orders: rawOrders, loading, error, setItemStatus, setItemsStatus } = useDeviceOrders(targetDevice);
+  const { orders: rawOrders, loading, error, setItemsStatus } = useDeviceOrders(targetDevice);
   // Rabatt-Positionen sind Preis-Abzüge, kein zuzubereitendes Gericht/Getränk (siehe
   // categories.is_discount) — auf Küchen-/Bar-Tickets werden sie deshalb ausgeblendet,
   // bleiben aber in Tischübersicht/Abrechnung sichtbar (die nutzen useDeviceOrders direkt).
@@ -232,6 +246,45 @@ export default function DeviceTicketBoard({
     [rawOrders]
   );
   const [tab, setTab] = useState<Tab>('offen');
+  // Auf dem Handy (kürzeste Seite < 600dp) bekommt die Küche statt der drei Spalten
+  // nebeneinander eine eigene, einspaltige Ansicht (PhoneKitchenBoard) — drei Spalten mit
+  // je zwei Karten waren auf ~390px Breite unlesbar gequetscht. Tablet/Laptop unverändert.
+  const isPhone = useIsPhone();
+  const styles = useThemedStyles(createStyles);
+  const phoneStyles = useThemedStyles(createPhoneStyles);
+  const [phoneStation, setPhoneStation] = useState<PhoneStation>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(PHONE_STATION_STORAGE_KEY).then((stored) => {
+      if (!cancelled && stored && (PHONE_STATIONS as string[]).includes(stored)) setPhoneStation(stored as PhoneStation);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changePhoneStation(next: PhoneStation) {
+    setPhoneStation(next);
+    AsyncStorage.setItem(PHONE_STATION_STORAGE_KEY, next);
+  }
+
+  const [phoneBarFilter, setPhoneBarFilter] = useState<PhoneBarFilter>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(PHONE_BAR_FILTER_STORAGE_KEY).then((stored) => {
+      if (!cancelled && stored && (PHONE_BAR_FILTERS as string[]).includes(stored)) setPhoneBarFilter(stored as PhoneBarFilter);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changePhoneBarFilter(next: PhoneBarFilter) {
+    setPhoneBarFilter(next);
+    AsyncStorage.setItem(PHONE_BAR_FILTER_STORAGE_KEY, next);
+  }
   // Standardmäßig an — Küche/Bar können den Ton per Glocken-Button stumm schalten
   // (z.B. während einer Pause). Wird in AsyncStorage gemerkt, damit die Einstellung
   // erhalten bleibt, wenn die App in den Hintergrund/Task-Wechsel geht oder neu
@@ -409,19 +462,24 @@ export default function DeviceTicketBoard({
     };
   }, [open, isBar]);
 
-  // Küchen-Stationen (Vorspeise | Hauptspeise | Barbecue): pro Station sowohl die offenen
-  // als auch die bereits fertigen Karten getrennt berechnen, unabhängig vom gerade
-  // gewählten Tab — die Tab-Leiste zeigt "Offen (n)" und "Vergangene Bestellungen (n)"
-  // gleichzeitig, braucht also beide Zahlen parallel, nicht nur die des sichtbaren Tabs.
-  // "openOrders" enthält je Karte nur noch die tatsächlich offenen Positionen dieser
-  // Station (stationOpenOnly) — "doneOrders" zeigt jede fertig abgehakte Position als
-  // EIGENE Karte (stationDoneItems), sortiert nach individueller Abhak-Zeit (neueste
-  // zuerst), statt mehrere fertige Positionen derselben Bestellung zu einer Sammelkarte
-  // zusammenzufassen. Grund: eine einzelne abgehakte Position soll sofort und klar auffindbar
-  // in "Vergangene Bestellungen" auftauchen, nicht erst wenn ALLE Positionen dieser Station
-  // fertig sind — und falls eine Position aus Versehen abgehakt wurde, steht sie dank der
-  // Sortierung ganz oben und muss nicht erst in einer Sammelkarte gesucht werden, um sie per
-  // erneutem Antippen zurück auf "offen" zu setzen.
+  // Nur für die Handy-Ansicht der Bar (PhoneBarBoard): "Vergangene Bestellungen" je
+  // Getränke/Nachspeisen gefiltert — ganze Tickets, deren Positionen DIESER Gruppe alle
+  // fertig sind (wie stationDoneTickets bei der Küche). Ohne Filter ("Alle") zeigt die
+  // Handy-Ansicht wie das Tablet `done` (ganze Bestellung an der Bar fertig).
+  const barDoneByGroup = useMemo(() => {
+    if (!isBar) return null;
+    return {
+      getraenke: stationDoneTickets(orders, (item) => item.menu_item.category.menu_group === 'getraenke'),
+      nachspeisen: stationDoneTickets(orders, (item) => item.menu_item.category.menu_group === 'nachspeisen'),
+    };
+  }, [orders, isBar]);
+
+  // Küchen-Stationen (Vorspeise | Hauptspeise | Barbecue): pro Station die offenen und die
+  // bereits komplett erledigten Tickets, unabhängig vom gerade gewählten Tab — die Tab-Leiste
+  // zeigt "Offen (n)" und "Vergangene Bestellungen (n)" gleichzeitig. "openOrders" sind ganze
+  // Tickets (je Station), auf denen abgehakte Positionen mit grünem Haken stehen bleiben
+  // (itemsMatching), bis das Ticket für diese Station komplett ist — dann wandert es als
+  // Ganzes nach "doneOrders" (stationDoneTickets).
   const kitchenStations = useMemo(() => {
     if (targetDevice !== 'kitchen') return null;
 
@@ -432,33 +490,34 @@ export default function DeviceTicketBoard({
       doneEmptyText: string
     ) => ({
       title,
-      openOrders: stationOpenOnly(orders, predicate),
+      openOrders: itemsMatching(orders, predicate),
       openEmptyText,
-      doneOrders: stationDoneItems(orders, predicate),
+      doneOrders: stationDoneTickets(orders, predicate),
       doneEmptyText,
     });
 
     return {
       primary: build(
-        'Vorspeise',
+        bt('stationVorspeise'),
         (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'vorspeise',
-        'Keine offenen Vorspeisen.',
-        'Noch keine erledigten Vorspeisen.'
+        bt('emptyOpenVorspeise'),
+        bt('emptyDoneVorspeise')
       ),
       secondary: build(
-        'Hauptspeise',
+        bt('stationHauptspeise'),
         (item) => (item.menu_item.category.kitchen_station ?? 'hauptspeise') === 'hauptspeise',
-        'Keine offenen Hauptspeisen.',
-        'Noch keine erledigten Hauptspeisen.'
+        bt('emptyOpenHauptspeise'),
+        bt('emptyDoneHauptspeise')
       ),
       tertiary: build(
-        'Barbecue',
+        bt('stationBarbecue'),
         (item) => item.menu_item.category.kitchen_station === 'barbecue',
-        'Keine offenen Barbecue-Bestellungen.',
-        'Noch keine erledigten Barbecue-Bestellungen.'
+        bt('emptyOpenBarbecue'),
+        bt('emptyDoneBarbecue')
       ),
     };
-  }, [orders, targetDevice]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- bt hängt nur an uiLang
+  }, [orders, targetDevice, uiLang]);
 
   // Stückzahl-Zusammenfassung für den "Anzahl"-Tab (siehe aggregateOpen) — dieselbe
   // Stationen-Aufteilung wie kitchenStations oben, aber aus allen noch offenen Positionen
@@ -472,11 +531,9 @@ export default function DeviceTicketBoard({
     };
   }, [open, targetDevice]);
 
-  // Tab-Zähler "Vergangene Bestellungen (n)": Summe der drei Stationen-Spalten statt der
-  // alten "ganze Bestellung fertig"-Zählung (`done.length`) — eine Bestellung kann jetzt
-  // gleichzeitig in mehreren Stationen-Spalten als erledigt auftauchen (z.B. Vorspeise UND
-  // Barbecue fertig, Hauptspeise noch offen), der Zähler soll das widerspiegeln statt nur
-  // komplett abgeschlossene Bestellungen zu zählen.
+  // Tab-Zähler "Vergangene Bestellungen (n)": Summe der fertigen Tickets aller drei
+  // Stationen-Spalten — ein Tisch kann z.B. mit der Vorspeise schon fertig sein, während
+  // seine Hauptspeise noch offen ist.
   const kitchenDoneCardCount = kitchenStations
     ? kitchenStations.primary.doneOrders.length +
       kitchenStations.secondary.doneOrders.length +
@@ -494,8 +551,72 @@ export default function DeviceTicketBoard({
   if (error) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Bestellungen konnten nicht geladen werden: {error}</Text>
+        <Text style={styles.errorText}>{bt('ordersLoadError', { error })}</Text>
       </View>
+    );
+  }
+
+  if (targetDevice === 'kitchen' && isPhone) {
+    return (
+      <PhoneKitchenBoard
+        styles={phoneStyles}
+        t={bt}
+        lang={lang}
+        tab={tab}
+        onTabChange={setTab}
+        station={phoneStation}
+        onStationChange={changePhoneStation}
+        openCount={open.length}
+        openItemCount={countOpenItems(open)}
+        doneCardCount={kitchenDoneCardCount}
+        stations={kitchenStations!}
+        dishCounts={kitchenDishCounts!}
+        soundEnabled={soundEnabled}
+        onToggleSound={toggleSound}
+        completeAllLabel={completeAllLabel}
+        cardBackground={cardBackground}
+        onToggleItem={setItemsStatus}
+        onCompleteOrder={completeOrder}
+      />
+    );
+  }
+
+  if (isBar && isPhone) {
+    return (
+      <PhoneBarBoard
+        styles={phoneStyles}
+        t={bt}
+        tab={tab}
+        onTabChange={setTab}
+        filter={phoneBarFilter}
+        onFilterChange={changePhoneBarFilter}
+        open={open}
+        done={done}
+        groups={{
+          getraenke: {
+            title: barColumns!.primaryTitle,
+            openOrders: barColumns!.primaryOrders,
+            openEmptyText: barColumns!.primaryEmptyText,
+            doneOrders: barDoneByGroup!.getraenke,
+            doneEmptyText: 'Noch keine erledigten Getränke.',
+            dishCounts: barDishCounts!.primary,
+          },
+          nachspeisen: {
+            title: barColumns!.secondaryTitle,
+            openOrders: barColumns!.secondaryOrders,
+            openEmptyText: barColumns!.secondaryEmptyText,
+            doneOrders: barDoneByGroup!.nachspeisen,
+            doneEmptyText: 'Noch keine erledigten Nachspeisen.',
+            dishCounts: barDishCounts!.secondary,
+          },
+        }}
+        soundEnabled={soundEnabled}
+        onToggleSound={toggleSound}
+        completeAllLabel={completeAllLabel}
+        cardBackground={cardBackground}
+        onToggleItem={setItemsStatus}
+        onCompleteOrder={completeOrder}
+      />
     );
   }
 
@@ -540,7 +661,7 @@ export default function DeviceTicketBoard({
               style={[styles.tab, largeMode && styles.tabLarge, tab === 'offen' && styles.tabActive]}
               onPress={() => setTab('offen')}
             >
-              <KitchenTabLabel hanzi="待做" de="Offen" count={open.length} active={tab === 'offen'} large={largeMode} styles={styles} />
+              <KitchenTabLabel hanzi="待做" de={lang === 'de' ? 'Offen' : null} count={open.length} active={tab === 'offen'} large={largeMode} styles={styles} />
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tab, largeMode && styles.tabLarge, tab === 'fertig' && styles.tabActive]}
@@ -548,23 +669,12 @@ export default function DeviceTicketBoard({
             >
               <KitchenTabLabel
                 hanzi="已完成"
-                de="Vergangene Bestellungen"
+                de={lang === 'de' ? 'Vergangene Bestellungen' : null}
                 count={kitchenDoneCardCount}
                 active={tab === 'fertig'}
                 large={largeMode}
                 styles={styles}
               />
-            </TouchableOpacity>
-            {/* "Komplett"-Tab: zeigt jedes Tisch-Ticket unfragmentiert (alle Stationen
-                zusammen in einer Karte, mit dem Status jeder einzelnen Position) — anders
-                als Offen/Vergangene Bestellungen, die dieselbe Bestellung stationsweise
-                aufsplitten. Für den Überblick, wenn jemand den ganzen Stand eines Tisches
-                auf einen Blick braucht, statt ihn aus mehreren Spalten zusammenzusuchen. */}
-            <TouchableOpacity
-              style={[styles.tab, largeMode && styles.tabLarge, tab === 'komplett' && styles.tabActive]}
-              onPress={() => setTab('komplett')}
-            >
-              <KitchenTabLabel hanzi="整单" de="Komplett" count={orders.length} active={tab === 'komplett'} large={largeMode} styles={styles} />
             </TouchableOpacity>
             {/* "Anzahl"-Tab: fasst alle offenen Positionen zu einer Stückzahl-Liste zusammen
                 (z.B. "5× Gyoza"), damit man bei vielen gleichen Bestellungen nicht selbst
@@ -575,7 +685,7 @@ export default function DeviceTicketBoard({
             >
               <KitchenTabLabel
                 hanzi="数量"
-                de="Anzahl"
+                de={lang === 'de' ? 'Anzahl' : null}
                 count={countOpenItems(open)}
                 active={tab === 'anzahl'}
                 large={largeMode}
@@ -634,11 +744,13 @@ export default function DeviceTicketBoard({
               <DishCountList entries={barDishCounts!.primary} large={largeMode} styles={styles} emptyText={barColumns!.primaryEmptyText} />
             ) : (
               <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
                 orders={barColumns!.primaryOrders}
                 large={largeMode}
                 styles={styles}
                 cardBackground={cardBackground}
-                onToggleItem={setItemStatus}
+                onToggleItem={setItemsStatus}
                 onCompleteOrder={completeOrder}
                 allowComplete
                 emptyText={barColumns!.primaryEmptyText}
@@ -662,11 +774,13 @@ export default function DeviceTicketBoard({
               <DishCountList entries={barDishCounts!.secondary} large={largeMode} styles={styles} emptyText={barColumns!.secondaryEmptyText} />
             ) : (
               <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
                 orders={barColumns!.secondaryOrders}
                 large={largeMode}
                 styles={styles}
                 cardBackground={cardBackground}
-                onToggleItem={setItemStatus}
+                onToggleItem={setItemsStatus}
                 onCompleteOrder={completeOrder}
                 allowComplete
                 emptyText={barColumns!.secondaryEmptyText}
@@ -678,11 +792,13 @@ export default function DeviceTicketBoard({
           <View style={{ flex: stationRatios[2] }}>
             <StationHeader title="Vergangene Bestellungen" count={done.length} suffix="erledigt" large={largeMode} styles={styles} />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={done}
               large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
+              onToggleItem={setItemsStatus}
               showFinishedAt
               emptyText="Noch keine erledigten Bestellungen."
             />
@@ -690,23 +806,6 @@ export default function DeviceTicketBoard({
         </View>
       ) : tab === 'offen' && open.length === 0 ? (
         <EmptyBoardBanner large={largeMode} styles={styles} />
-      ) : tab === 'komplett' ? (
-        // "Komplett"-Tab: eine einzelne, volle Breite nutzende Liste statt der
-        // Stationen-Aufteilung — jede Karte zeigt das GESAMTE Ticket eines Tisches, so wie
-        // es reinkam (alle Positionen aller Stationen zusammen, mit individuellem
-        // Offen/Fertig-Status je Position), unabhängig davon, ob einzelne Positionen schon
-        // in einer anderen Spalte (Offen/Vergangene Bestellungen) getrennt aufgeführt sind.
-        // `orders` (nicht `open`/`done`) als Quelle: bleibt sichtbar, bis der Tisch
-        // abgeschlossen wird, auch wenn schon alle Positionen fertig sind.
-        <TicketList
-          orders={orders}
-          large={largeMode}
-          styles={styles}
-          cardBackground={cardBackground}
-          onToggleItem={setItemStatus}
-          emptyText="Keine Bestellungen."
-          columns={3}
-        />
       ) : tab === 'anzahl' ? (
         // "Anzahl"-Tab: dieselbe Drei-Spalten-Aufteilung wie Offen/Vergangene Bestellungen,
         // aber jede Spalte zeigt eine nach Menge sortierte Stückzahl-Liste
@@ -718,32 +817,25 @@ export default function DeviceTicketBoard({
           onLayout={(e) => handleStationRowLayout(e.nativeEvent.layout.width)}
         >
           <View style={{ flex: stationRatios[0] }}>
-            <StationHeader title={kitchenStations!.primary.title} count={sumCounts(kitchenDishCounts!.primary)} large={largeMode} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.primary} large={largeMode} styles={styles} emptyText="Keine offenen Vorspeisen." />
+            <StationHeader title={kitchenStations!.primary.title} count={sumCounts(kitchenDishCounts!.primary)} suffix={bt('suffixOpen')} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.primary} large={largeMode} styles={styles} emptyText={bt('emptyOpenVorspeise')} />
           </View>
           <StationDividerHandle responder={dividerResponders[0]} styles={styles} />
           <View style={{ flex: stationRatios[1] }}>
-            <StationHeader title={kitchenStations!.secondary.title} count={sumCounts(kitchenDishCounts!.secondary)} large={largeMode} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.secondary} large={largeMode} styles={styles} emptyText="Keine offenen Hauptspeisen." />
+            <StationHeader title={kitchenStations!.secondary.title} count={sumCounts(kitchenDishCounts!.secondary)} suffix={bt('suffixOpen')} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.secondary} large={largeMode} styles={styles} emptyText={bt('emptyOpenHauptspeise')} />
           </View>
           <StationDividerHandle responder={dividerResponders[1]} styles={styles} />
           <View style={{ flex: stationRatios[2] }}>
-            <StationHeader title={kitchenStations!.tertiary.title} count={sumCounts(kitchenDishCounts!.tertiary)} large={largeMode} styles={styles} />
-            <DishCountList entries={kitchenDishCounts!.tertiary} large={largeMode} styles={styles} emptyText="Keine offenen Barbecue-Bestellungen." />
+            <StationHeader title={kitchenStations!.tertiary.title} count={sumCounts(kitchenDishCounts!.tertiary)} suffix={bt('suffixOpen')} large={largeMode} styles={styles} />
+            <DishCountList entries={kitchenDishCounts!.tertiary} large={largeMode} styles={styles} emptyText={bt('emptyOpenBarbecue')} />
           </View>
         </View>
       ) : (
-        // Drei Spalten für die Küche, in BEIDEN Tabs: im "Offen"-Tab die noch offenen
-        // Positionen je Station (Vorspeise/Hauptspeise/Barbecue, siehe stationOpenOnly),
-        // im "Vergangene Bestellungen"-Tab jede bereits abgehakte Position als EIGENE Karte
-        // (kitchenStations.*.doneOrders, siehe stationDoneItems), sortiert nach Abhak-Zeit —
-        // eine einzelne Position wandert also sofort beim Abhaken von der Offen- in eine
-        // eigene Vergangene-Bestellungen-Karte, statt erst wenn ALLE Positionen dieser
-        // Station fertig sind, und ohne mit anderen Positionen zu einer Sammelkarte
-        // vermischt zu werden (leichter wiederzufinden, falls aus Versehen abgehakt). So
-        // blockiert eine schon fertige Position keinen Platz mehr in der Offen-Karte, den eine neu
-        // eingehende Bestellung bräuchte, und dieselbe Bestellung kann gleichzeitig als
-        // Offen- UND Vergangene-Bestellungen-Karte in derselben Station auftauchen.
+        // Drei Spalten für die Küche, in BEIDEN Tabs: im "Offen"-Tab die Tickets mit noch
+        // offenen Positionen je Station (abgehakte Positionen bleiben mit grünem Haken auf
+        // dem Ticket stehen), im "Vergangene Bestellungen"-Tab die Tickets, die für diese
+        // Station komplett fertig sind — neueste zuerst.
         <View
           style={styles.stationRow}
           onLayout={(e) => handleStationRowLayout(e.nativeEvent.layout.width)}
@@ -751,17 +843,19 @@ export default function DeviceTicketBoard({
           <View style={{ flex: stationRatios[0] }}>
             <StationHeader
               title={kitchenStations!.primary.title}
-              count={tab === 'offen' ? countOpenItems(kitchenStations!.primary.openOrders) : countItems(kitchenStations!.primary.doneOrders)}
-              suffix={tab === 'offen' ? 'offen' : 'erledigt'}
+              count={tab === 'offen' ? countOpenItems(kitchenStations!.primary.openOrders) : kitchenStations!.primary.doneOrders.length}
+              suffix={tab === 'offen' ? bt('suffixOpen') : bt('suffixDone')}
               large={largeMode}
               styles={styles}
             />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={tab === 'offen' ? kitchenStations!.primary.openOrders : kitchenStations!.primary.doneOrders}
               large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
+              onToggleItem={setItemsStatus}
               onCompleteOrder={completeOrder}
               allowComplete={tab === 'offen'}
               showFinishedAt={tab === 'fertig'}
@@ -777,17 +871,19 @@ export default function DeviceTicketBoard({
           <View style={{ flex: stationRatios[1] }}>
             <StationHeader
               title={kitchenStations!.secondary.title}
-              count={tab === 'offen' ? countOpenItems(kitchenStations!.secondary.openOrders) : countItems(kitchenStations!.secondary.doneOrders)}
-              suffix={tab === 'offen' ? 'offen' : 'erledigt'}
+              count={tab === 'offen' ? countOpenItems(kitchenStations!.secondary.openOrders) : kitchenStations!.secondary.doneOrders.length}
+              suffix={tab === 'offen' ? bt('suffixOpen') : bt('suffixDone')}
               large={largeMode}
               styles={styles}
             />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={tab === 'offen' ? kitchenStations!.secondary.openOrders : kitchenStations!.secondary.doneOrders}
               large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
+              onToggleItem={setItemsStatus}
               onCompleteOrder={completeOrder}
               allowComplete={tab === 'offen'}
               showFinishedAt={tab === 'fertig'}
@@ -799,17 +895,19 @@ export default function DeviceTicketBoard({
           <View style={{ flex: stationRatios[2] }}>
             <StationHeader
               title={kitchenStations!.tertiary.title}
-              count={tab === 'offen' ? countOpenItems(kitchenStations!.tertiary.openOrders) : countItems(kitchenStations!.tertiary.doneOrders)}
-              suffix={tab === 'offen' ? 'offen' : 'erledigt'}
+              count={tab === 'offen' ? countOpenItems(kitchenStations!.tertiary.openOrders) : kitchenStations!.tertiary.doneOrders.length}
+              suffix={tab === 'offen' ? bt('suffixOpen') : bt('suffixDone')}
               large={largeMode}
               styles={styles}
             />
             <TicketList
+                t={bt}
+                completeAllLabel={completeAllLabel}
               orders={tab === 'offen' ? kitchenStations!.tertiary.openOrders : kitchenStations!.tertiary.doneOrders}
               large={largeMode}
               styles={styles}
               cardBackground={cardBackground}
-              onToggleItem={setItemStatus}
+              onToggleItem={setItemsStatus}
               onCompleteOrder={completeOrder}
               allowComplete={tab === 'offen'}
               showFinishedAt={tab === 'fertig'}
@@ -823,13 +921,454 @@ export default function DeviceTicketBoard({
   );
 }
 
+type KitchenStationData = {
+  title: string;
+  openOrders: GroupedOrder[];
+  openEmptyText: string;
+  doneOrders: GroupedOrder[];
+  doneEmptyText: string;
+};
+type KitchenStationsData = Record<'primary' | 'secondary' | 'tertiary', KitchenStationData>;
+type KitchenDishCountsData = Record<'primary' | 'secondary' | 'tertiary', DishCount[]>;
+type PhoneStyles = ReturnType<typeof createPhoneStyles>;
+
+// Handy-Ansicht der Küche (siehe useIsPhone) — statt drei Stationen-Spalten nebeneinander:
+//   1. kompakte Tab-Leiste (待做 / 已完成 / 数量, deutsche Kurzform darunter), nur Glocke,
+//      keine "−"/"+"-Kartengröße (auf dem Handy gibt es nur eine sinnvolle Größe),
+//   2. darunter eine Stationen-Leiste als Filter (全部 | 小吃 | 主食 | 烤肉) mit Zähler je
+//      Station — "全部" zeigt alle Stationen untereinander mit fixierten Abschnitts-
+//      Überschriften, eine einzelne Station nur deren Tickets,
+//   3. EINE Spalte volle Breite mit denselben Ticket-Karten wie auf dem Tablet (TicketCard,
+//      gleiches Abhaken/Wischen/"全部完成"), nur mit etwas größerer Schrift/Haken für das
+//      kleine Display.
+// Datenbasis (kitchenStations/kitchenDishCounts) ist exakt dieselbe wie auf dem Tablet.
+function PhoneKitchenBoard({
+  styles,
+  t,
+  lang,
+  tab,
+  onTabChange,
+  station,
+  onStationChange,
+  openCount,
+  openItemCount,
+  doneCardCount,
+  stations,
+  dishCounts,
+  soundEnabled,
+  onToggleSound,
+  completeAllLabel,
+  cardBackground,
+  onToggleItem,
+  onCompleteOrder,
+}: {
+  styles: PhoneStyles;
+  t: BoardT;
+  lang: string;
+  tab: Tab;
+  onTabChange: (tab: Tab) => void;
+  station: PhoneStation;
+  onStationChange: (station: PhoneStation) => void;
+  openCount: number;
+  openItemCount: number;
+  doneCardCount: number;
+  stations: KitchenStationsData;
+  dishCounts: KitchenDishCountsData;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
+  completeAllLabel: string;
+  cardBackground: Record<OrderProgress, object>;
+  onToggleItem: (itemIds: string[], status: OrderItemStatus) => void;
+  onCompleteOrder: (order: GroupedOrder) => void;
+}) {
+  const de = lang === 'de';
+
+  function countFor(s: Exclude<PhoneStation, 'all'>): number {
+    const slot = PHONE_STATION_SLOT[s];
+    if (tab === 'offen') return countOpenItems(stations[slot].openOrders);
+    if (tab === 'fertig') return stations[slot].doneOrders.length;
+    return sumCounts(dishCounts[slot]);
+  }
+
+  const stationList: Exclude<PhoneStation, 'all'>[] =
+    station === 'all' ? ['vorspeise', 'hauptspeise', 'barbecue'] : [station];
+  const showSectionHeaders = station === 'all';
+  const suffix = tab === 'fertig' ? t('suffixDone') : t('suffixOpen');
+
+  const tabs: { key: Tab; hanzi: string; de: string; count: number }[] = [
+    { key: 'offen', hanzi: '待做', de: 'Offen', count: openCount },
+    { key: 'fertig', hanzi: '已完成', de: 'Fertig', count: doneCardCount },
+    { key: 'anzahl', hanzi: '数量', de: 'Anzahl', count: openItemCount },
+  ];
+
+  let content: React.ReactNode;
+  if (tab === 'offen' && openCount === 0) {
+    content = <EmptyBoardBanner large={false} styles={styles} />;
+  } else if (tab === 'anzahl') {
+    const sections = stationList
+      .map((s) => ({
+        key: s,
+        title: stations[PHONE_STATION_SLOT[s]].title,
+        count: countFor(s),
+        data: dishCounts[PHONE_STATION_SLOT[s]],
+      }))
+      .filter((section) => !showSectionHeaders || section.data.length > 0);
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(entry) => entry.key}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          showSectionHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: entry }) => (
+          <View style={styles.countCard}>
+            <Text style={styles.countCardCount}>{entry.count}×</Text>
+            <View style={styles.countCardTextWrap}>
+              <Text style={styles.countCardDish}>{entry.dishLabel}</Text>
+              {entry.variantLabel && <Text style={styles.countCardVariant}>{entry.variantLabel}</Text>}
+            </View>
+          </View>
+        )}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>
+            {station === 'all' ? t('emptyOpenAll') : stations[PHONE_STATION_SLOT[station]].openEmptyText}
+          </Text>
+        }
+      />
+    );
+  } else {
+    const sections = stationList
+      .map((s) => {
+        const data = stations[PHONE_STATION_SLOT[s]];
+        return {
+          key: s,
+          title: data.title,
+          count: countFor(s),
+          data: tab === 'offen' ? data.openOrders : data.doneOrders,
+        };
+      })
+      .filter((section) => !showSectionHeaders || section.data.length > 0);
+    const emptyText =
+      station === 'all'
+        ? tab === 'offen'
+          ? t('emptyOpenAll')
+          : t('emptyDoneAll')
+        : tab === 'offen'
+          ? stations[PHONE_STATION_SLOT[station]].openEmptyText
+          : stations[PHONE_STATION_SLOT[station]].doneEmptyText;
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(order) => order.orderId}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          showSectionHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: order }) => (
+          <TicketCard
+            t={t}
+            completeAllLabel={completeAllLabel}
+            order={order}
+            large={false}
+            styles={styles}
+            cardBackground={cardBackground}
+            onToggleItem={onToggleItem}
+            onCompleteOrder={onCompleteOrder}
+            allowComplete={tab === 'offen'}
+            showFinishedAt={tab === 'fertig'}
+          />
+        )}
+        ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
+      />
+    );
+  }
+
+  const allCount = countFor('vorspeise') + countFor('hauptspeise') + countFor('barbecue');
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.tabBar}>
+        <View style={styles.tabsRow}>
+          {tabs.map(({ key, hanzi, de: deLabel, count }) => (
+            <TouchableOpacity key={key} style={[styles.tab, tab === key && styles.tabActive]} onPress={() => onTabChange(key)}>
+              <KitchenTabLabel hanzi={hanzi} de={de ? deLabel : null} count={count} active={tab === key} large={false} styles={styles} />
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity style={styles.bellButton} onPress={onToggleSound} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.bellButtonText}>{soundEnabled ? '🔔' : '🔕'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <PhoneFilterBar
+        styles={styles}
+        options={PHONE_STATIONS.map((s) => ({
+          key: s,
+          label: s === 'all' ? t('stationAll') : stations[PHONE_STATION_SLOT[s]].title,
+          count: s === 'all' ? allCount : countFor(s),
+        }))}
+        selected={station}
+        onSelect={onStationChange}
+        highlightCounts={tab !== 'fertig'}
+      />
+
+      {content}
+    </View>
+  );
+}
+
+// Filter-Leiste der Handy-Ansichten (Küche: 全部/小吃/主食/烤肉, Bar: Alle/Getränke/
+// Nachspeisen) — gleich breite Kacheln mit Name + Zähler, aktive Kachel in Akzentfarbe.
+function PhoneFilterBar<K extends string>({
+  styles,
+  options,
+  selected,
+  onSelect,
+  highlightCounts,
+}: {
+  styles: PhoneStyles;
+  options: { key: K; label: string; count: number }[];
+  selected: K;
+  onSelect: (key: K) => void;
+  // Zähler > 0 in Akzentfarbe (offene Arbeit) — im Vergangene-Bestellungen-Tab aus, da dort
+  // nichts mehr ansteht.
+  highlightCounts: boolean;
+}) {
+  return (
+    <View style={styles.phoneStationBar}>
+      {options.map(({ key, label, count }) => {
+        const active = key === selected;
+        return (
+          <TouchableOpacity
+            key={key}
+            style={[styles.phoneStationChip, active && styles.phoneStationChipActive]}
+            onPress={() => onSelect(key)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+          >
+            <Text
+              style={[styles.phoneStationChipLabel, active && styles.phoneStationChipLabelActive]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {label}
+            </Text>
+            <Text
+              style={[
+                styles.phoneStationChipCount,
+                count > 0 && highlightCounts && styles.phoneStationChipCountHot,
+                active && styles.phoneStationChipCountActive,
+              ]}
+            >
+              {count}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+type BarGroupData = {
+  title: string;
+  openOrders: GroupedOrder[];
+  openEmptyText: string;
+  doneOrders: GroupedOrder[];
+  doneEmptyText: string;
+  dishCounts: DishCount[];
+};
+
+// Handy-Ansicht der Bar (siehe useIsPhone) — Gegenstück zu PhoneKitchenBoard, immer
+// Deutsch. Statt drei Spalten nebeneinander (Getränke | Nachspeisen | Vergangene
+// Bestellungen):
+//   1. Tabs Offen / Anzahl / Erledigt — "Vergangene Bestellungen" wird auf dem Handy zum
+//      dritten Tab, da für eine dauerhaft sichtbare dritte Spalte kein Platz ist,
+//   2. Filter-Leiste Alle | Getränke | Nachspeisen (gemerkt pro Gerät),
+//   3. EINE Spalte volle Breite mit denselben Ticket-Karten (TicketCard). "Alle" zeigt in
+//      Offen/Anzahl Getränke und Nachspeisen untereinander mit fixierten Überschriften, im
+//      Erledigt-Tab wie auf dem Tablet ganze an der Bar fertige Bestellungen (`done`).
+function PhoneBarBoard({
+  styles,
+  t,
+  tab,
+  onTabChange,
+  filter,
+  onFilterChange,
+  open,
+  done,
+  groups,
+  soundEnabled,
+  onToggleSound,
+  completeAllLabel,
+  cardBackground,
+  onToggleItem,
+  onCompleteOrder,
+}: {
+  styles: PhoneStyles;
+  t: BoardT;
+  tab: Tab;
+  onTabChange: (tab: Tab) => void;
+  filter: PhoneBarFilter;
+  onFilterChange: (filter: PhoneBarFilter) => void;
+  open: GroupedOrder[];
+  done: GroupedOrder[];
+  groups: Record<'getraenke' | 'nachspeisen', BarGroupData>;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
+  completeAllLabel: string;
+  cardBackground: Record<OrderProgress, object>;
+  onToggleItem: (itemIds: string[], status: OrderItemStatus) => void;
+  onCompleteOrder: (order: GroupedOrder) => void;
+}) {
+  function countFor(g: 'getraenke' | 'nachspeisen'): number {
+    if (tab === 'fertig') return groups[g].doneOrders.length;
+    if (tab === 'anzahl') return sumCounts(groups[g].dishCounts);
+    return countOpenItems(groups[g].openOrders);
+  }
+  const allCount = tab === 'fertig' ? done.length : countFor('getraenke') + countFor('nachspeisen');
+
+  const groupList: ('getraenke' | 'nachspeisen')[] = filter === 'all' ? ['getraenke', 'nachspeisen'] : [filter];
+  const showSectionHeaders = filter === 'all';
+  const suffix = tab === 'fertig' ? 'erledigt' : 'offen';
+
+  const tabs: { key: Tab; label: string; count: number }[] = [
+    { key: 'offen', label: 'Offen', count: open.length },
+    { key: 'anzahl', label: 'Anzahl', count: countOpenItems(open) },
+    { key: 'fertig', label: 'Erledigt', count: done.length },
+  ];
+
+  let content: React.ReactNode;
+  if (tab === 'anzahl') {
+    const sections = groupList
+      .map((g) => ({ key: g, title: groups[g].title, count: countFor(g), data: groups[g].dishCounts }))
+      .filter((section) => !showSectionHeaders || section.data.length > 0);
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(entry) => entry.key}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          showSectionHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: entry }) => (
+          <View style={styles.countCard}>
+            <Text style={styles.countCardCount}>{entry.count}×</Text>
+            <View style={styles.countCardTextWrap}>
+              <Text style={styles.countCardDish}>{entry.dishLabel}</Text>
+              {entry.variantLabel && <Text style={styles.countCardVariant}>{entry.variantLabel}</Text>}
+            </View>
+          </View>
+        )}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>{filter === 'all' ? 'Nichts offen.' : groups[filter].openEmptyText}</Text>
+        }
+      />
+    );
+  } else {
+    const sections =
+      tab === 'fertig' && filter === 'all'
+        ? // Wie die Vergangene-Bestellungen-Spalte auf dem Tablet: ganze Bestellungen, bei
+          // denen an der Bar alles fertig ist, neueste zuerst — ohne Abschnitte.
+          done.length > 0
+          ? [{ key: 'done', title: '', count: done.length, data: done }]
+          : []
+        : groupList
+            .map((g) => ({
+              key: g,
+              title: groups[g].title,
+              count: countFor(g),
+              data: tab === 'fertig' ? groups[g].doneOrders : groups[g].openOrders,
+            }))
+            .filter((section) => !showSectionHeaders || section.data.length > 0);
+    const emptyText =
+      filter === 'all'
+        ? tab === 'fertig'
+          ? 'Noch keine erledigten Bestellungen.'
+          : 'Nichts offen.'
+        : tab === 'fertig'
+          ? groups[filter].doneEmptyText
+          : groups[filter].openEmptyText;
+    const withHeaders = showSectionHeaders && tab !== 'fertig';
+    content = (
+      <SectionList
+        sections={sections}
+        keyExtractor={(order) => order.orderId}
+        stickySectionHeadersEnabled
+        contentContainerStyle={styles.listContent}
+        renderSectionHeader={({ section }) =>
+          withHeaders ? (
+            <StationHeader title={section.title} count={section.count} suffix={suffix} large={false} styles={styles} />
+          ) : null
+        }
+        renderItem={({ item: order }) => (
+          <TicketCard
+            t={t}
+            completeAllLabel={completeAllLabel}
+            order={order}
+            large={false}
+            styles={styles}
+            cardBackground={cardBackground}
+            onToggleItem={onToggleItem}
+            onCompleteOrder={onCompleteOrder}
+            allowComplete={tab !== 'fertig'}
+            showFinishedAt={tab === 'fertig'}
+          />
+        )}
+        ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.tabBar}>
+        <View style={styles.tabsRow}>
+          {tabs.map(({ key, label, count }) => (
+            <TouchableOpacity key={key} style={[styles.tab, tab === key && styles.tabActive]} onPress={() => onTabChange(key)}>
+              <BarTabLabel label={label} count={count} active={tab === key} large={false} styles={styles} />
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity style={styles.bellButton} onPress={onToggleSound} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={styles.bellButtonText}>{soundEnabled ? '🔔' : '🔕'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <PhoneFilterBar
+        styles={styles}
+        options={PHONE_BAR_FILTERS.map((f) => ({
+          key: f,
+          label: f === 'all' ? 'Alle' : groups[f].title,
+          count: f === 'all' ? allCount : countFor(f),
+        }))}
+        selected={filter}
+        onSelect={onFilterChange}
+        highlightCounts={tab !== 'fertig'}
+      />
+
+      {content}
+    </View>
+  );
+}
+
 // Ersetzt die Ticket-Liste komplett, solange im "Offen"-Tab der Küche nichts ansteht
 // (statt nur eines schlichten ListEmptyComponent-Texts wie sonst) — ein kleiner Spaß für
 // ruhige Momente. Gilt für alle drei Spalten gleichzeitig (dieselbe `open`-Liste speist
 // sie alle), deshalb einmal über dem ganzen Board statt einmal pro Spalte. Die Bar hat
 // dieses Vollbild-Banner nicht (siehe isBar), da ihre Vergangene-Bestellungen-Spalte immer
 // sichtbar bleiben soll.
-// Zwei-Zeilen-Beschriftung für die Küchen-Tabs (Offen/Vergangene Bestellungen/Komplett/
+// Zwei-Zeilen-Beschriftung für die Küchen-Tabs (Offen/Vergangene Bestellungen/
 // Anzahl) — Hanzi oben/primär, Deutsch darunter/sekundär, genau wie bei den Gerichtenamen
 // auf den Ticket-Karten selbst (siehe CLAUDE.md: Küchenmitarbeiter sprechen kein Deutsch,
 // Hanzi ist deshalb überall in der Küchen-Ansicht die primäre Sprache, nicht nur bei den
@@ -844,7 +1383,8 @@ function KitchenTabLabel({
   styles,
 }: {
   hanzi: string;
-  de: string;
+  // null = auf Chinesisch geschaltet, dann nur die Hanzi-Zeile.
+  de: string | null;
   count: number;
   active: boolean;
   large: boolean;
@@ -855,7 +1395,7 @@ function KitchenTabLabel({
       <Text style={[styles.tabTextHanzi, large && styles.tabTextHanziLarge, active && styles.tabTextActive]}>
         {hanzi} ({count})
       </Text>
-      <Text style={[styles.tabTextDe, large && styles.tabTextDeLarge, active && styles.tabTextActive]}>{de}</Text>
+      {de && <Text style={[styles.tabTextDe, large && styles.tabTextDeLarge, active && styles.tabTextActive]}>{de}</Text>}
     </>
   );
 }
@@ -975,6 +1515,8 @@ function DishCountList({
 // auch für jede Spalte der "Offen"-Mehr-Spalten-Ansicht verwendet, damit Kartenlayout/
 // -verhalten überall identisch bleiben.
 function TicketList({
+  t,
+  completeAllLabel,
   orders,
   large,
   styles,
@@ -986,11 +1528,14 @@ function TicketList({
   columns = 1,
   showFinishedAt = false,
 }: {
+  t: BoardT;
+  completeAllLabel: string;
   orders: GroupedOrder[];
   large: boolean;
   styles: BoardStyles;
   cardBackground: Record<OrderProgress, object>;
-  onToggleItem: (itemId: string, status: OrderItemStatus) => void;
+  // Setzt ALLE Portionen einer Ticket-Zeile (siehe groupItems) auf einmal.
+  onToggleItem: (itemIds: string[], status: OrderItemStatus) => void;
   onCompleteOrder?: (order: GroupedOrder) => void;
   allowComplete?: boolean;
   emptyText: string;
@@ -1002,7 +1547,7 @@ function TicketList({
   // Vergangene-Bestellungen-Spalte der Bar): zeigt die Fertig-Zeit (spätestes done_at der
   // Karte, siehe latestDoneAt) statt der Bestellzeit — dort interessiert, wann abgehakt
   // wurde, nicht wann bestellt wurde. Bestimmt nur die Anzeige, die Sortierung nach
-  // Fertig-Zeit passiert schon vorher beim Aufbau von `orders` (stationDoneItems/`done`).
+  // Fertig-Zeit passiert schon vorher beim Aufbau von `orders` (stationDoneTickets/`done`).
   showFinishedAt?: boolean;
 }) {
   return (
@@ -1012,135 +1557,228 @@ function TicketList({
       numColumns={columns}
       columnWrapperStyle={columns > 1 ? styles.cardRow : undefined}
       contentContainerStyle={[styles.listContent, large && styles.listContentLarge]}
-      renderItem={({ item: order }) => {
-        const finishedAtMs = showFinishedAt ? latestDoneAt(order) : 0;
-        const card = (
-          <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
-            <View style={styles.cardHeader}>
-              <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>Tisch {order.table.number}</Text>
-              <View style={styles.cardHeaderRight}>
-                <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>
-                  {showFinishedAt && finishedAtMs > 0
-                    ? `Fertig ${formatTime(new Date(finishedAtMs).toISOString())}`
-                    : formatTime(order.createdAt)}
-                </Text>
-                {allowComplete && (
-                  <TouchableOpacity
-                    onPress={() => onCompleteOrder?.(order)}
-                    style={[styles.cardCloseButton, large && styles.cardCloseButtonLarge]}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <Text style={[styles.cardCloseButtonText, large && styles.cardCloseButtonTextLarge]}>×</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-            {order.items.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              style={[styles.itemRow, large && styles.itemRowLarge]}
-              onPress={() => onToggleItem(item.id, item.status === 'offen' ? 'fertig' : 'offen')}
-            >
-              {item.menu_item.name_hanzi ? (
-                <>
-                  <Text
-                    style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
-                  >
-                    {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
-                    {item.menu_item.name_hanzi}
-                    {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
-                  </Text>
-                  <Text style={[styles.itemDe, large && styles.itemDeLarge, item.status === 'fertig' && styles.itemDone]}>
-                    {item.menu_item.name_de}
-                    {item.variant_de ? ` · ${item.variant_de}` : ''}
-                  </Text>
-                </>
-              ) : (
-                // Bar-Items haben kein Hanzi (an der Bar wird auf Deutsch gearbeitet) —
-                // deutschen Namen dann in der großen/fetten Zeile zeigen statt einer leeren
-                // Hanzi-Zeile über einem winzigen deutschen Namen darunter.
-                <Text
-                  style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
-                >
-                  {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
-                  {item.menu_item.name_de}
-                  {item.variant_de ? ` · ${item.variant_de}` : ''}
-                </Text>
-              )}
-              {item.extras && item.extras.length > 0 && (
-                // Eigene auffällige Sprechblase statt nur kursivem Text — Extras (z.B.
-                // Ajitama-Ei/Mais bei Ramen) wurden von der Küche regelmäßig übersehen, wenn
-                // sie nur als kleine Textzeile zwischen Gericht und Notiz stand. Fester
-                // Amber-Ton (nicht colors.warning) + Icon, damit sie unabhängig von Hell-/
-                // Dunkelmodus und auch beim flüchtigen Blick auf die Karte sofort auffällt.
-                <View
-                  style={[
-                    styles.itemExtrasBadge,
-                    large && styles.itemExtrasBadgeLarge,
-                    item.status === 'fertig' && styles.itemExtrasBadgeDone,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.itemExtrasText,
-                      large && styles.itemExtrasTextLarge,
-                      item.status === 'fertig' && styles.itemExtrasTextDone,
-                    ]}
-                  >
-                    ➕ {item.extras.map((e) => `${e.quantity} ${e.name_hanzi} (${e.name_de})`).join(', ')}
-                  </Text>
-                </View>
-              )}
-              {item.note && (
-                <Text
-                  style={[styles.itemNote, large && styles.itemNoteLarge, item.status === 'fertig' && styles.itemDone]}
-                >
-                  Notiz: {item.note}
-                </Text>
-              )}
-            </TouchableOpacity>
-            ))}
-          </View>
-        );
-
-        // In der Zwei-Spalten-Kartenansicht (columns=2) braucht der eigentliche Grid-
-        // Slot — egal ob rohe Karte oder Swipeable-Wrapper — flex:1, sonst füllt die Karte
-        // nicht die ihr per columnWrapperStyle zugewiesene Spaltenbreite aus.
-        if (!allowComplete) {
-          return columns > 1 ? <View style={styles.cardInRow}>{card}</View> : card;
-        }
-
-        // Wisch-Geste als zweiter Weg (neben dem X-Button oben), eine ganze Karte auf
-        // einmal abzuhaken — z.B. wenn eine Hand gerade an Töpfen/Tellern beschäftigt
-        // ist und ein Wisch schneller geht als gezielt den kleinen X-Button zu treffen.
-        // renderRightActions zeigt das grüne Aktionsfeld, während nach links gewischt
-        // wird (der Inhalt rutscht dabei nach links, das Feld erscheint von rechts).
-        // onSwipeableOpen löst direkt beim vollständigen Öffnen aus, ohne dass zusätzlich
-        // noch auf das Aktionsfeld getippt werden müsste — ein durchgezogener Wisch reicht.
-        const swipeable = (
-          <Swipeable
-            renderRightActions={() => (
-              <View style={[styles.swipeCompleteAction, large && styles.swipeCompleteActionLarge]}>
-                <Text style={[styles.swipeCompleteActionText, large && styles.swipeCompleteActionTextLarge]}>
-                  ✓ Fertig
-                </Text>
-              </View>
-            )}
-            onSwipeableOpen={(direction) => {
-              if (direction === 'right') onCompleteOrder?.(order);
-            }}
-            overshootRight={false}
-            rightThreshold={40}
-          >
-            {card}
-          </Swipeable>
-        );
-
-        return columns > 1 ? <View style={styles.cardInRow}>{swipeable}</View> : swipeable;
-      }}
+      renderItem={({ item: order }) => (
+        <TicketCard
+          t={t}
+          completeAllLabel={completeAllLabel}
+          order={order}
+          large={large}
+          styles={styles}
+          cardBackground={cardBackground}
+          onToggleItem={onToggleItem}
+          onCompleteOrder={onCompleteOrder}
+          allowComplete={allowComplete}
+          inGrid={columns > 1}
+          showFinishedAt={showFinishedAt}
+        />
+      )}
       ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
     />
   );
+}
+
+
+// Eine einzelne Ticket-Karte — aus TicketList herausgelöst, damit die Handy-Ansicht der
+// Küche (PhoneKitchenBoard, SectionList statt Spalten-FlatLists) exakt dieselbe Karte mit
+// demselben Abhak-/Wisch-Verhalten rendern kann.
+function TicketCard({
+  t,
+  completeAllLabel,
+  order,
+  large,
+  styles,
+  cardBackground,
+  onToggleItem,
+  onCompleteOrder,
+  allowComplete = false,
+  inGrid = false,
+  showFinishedAt = false,
+}: {
+  t: BoardT;
+  completeAllLabel: string;
+  order: GroupedOrder;
+  large: boolean;
+  styles: BoardStyles;
+  cardBackground: Record<OrderProgress, object>;
+  onToggleItem: (itemIds: string[], status: OrderItemStatus) => void;
+  onCompleteOrder?: (order: GroupedOrder) => void;
+  allowComplete?: boolean;
+  // true im Zwei-Spalten-Kartenraster (columns > 1 in TicketList).
+  inGrid?: boolean;
+  showFinishedAt?: boolean;
+}) {
+  const finishedAtMs = showFinishedAt ? latestDoneAt(order) : 0;
+  const doneCount = order.items.filter((item) => item.status === 'fertig').length;
+  const itemGroups = groupItems(order.items);
+  const openGroupCount = itemGroups.filter((group) => group.item.status === 'offen').length;
+  const card = (
+    <View style={[styles.card, large && styles.cardLarge, cardBackground[progressFor(order)]]}>
+      <View style={styles.cardHeader}>
+        <Text style={[styles.tableLabel, large && styles.tableLabelLarge]}>{t('table', { n: order.table.number })}</Text>
+        <View style={styles.cardHeaderRight}>
+          <Text style={[styles.timeLabel, large && styles.timeLabelLarge]}>
+            {showFinishedAt && finishedAtMs > 0
+              ? t('finishedAt', { time: formatTime(new Date(finishedAtMs).toISOString()) })
+              : formatTime(order.createdAt)}
+          </Text>
+          {order.items.length > 1 && (
+            // Fortschritt des Tickets auf einen Blick ("2/3 erledigt"), da abgehakte
+            // Positionen jetzt auf dem Ticket stehen bleiben statt zu verschwinden.
+            <View style={[styles.progressPill, large && styles.progressPillLarge]}>
+              <Text style={[styles.progressPillText, large && styles.progressPillTextLarge]}>
+                ✓ {doneCount}/{order.items.length}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+      {itemGroups.map(({ key, item, ids }) => {
+      const isDone = item.status === 'fertig';
+      // Menge ("3×") direkt vor dem Gerichtenamen, auch bei 1× — steht so immer an
+      // derselben Stelle. Ab 2× in Akzentfarbe, damit Mehrfach-Portionen auffallen.
+      // Inline statt als eigene Spalte, damit schmale Küchenkarten nicht Breite verlieren.
+      const qtyPrefix = (
+        <Text style={[styles.qtyText, ids.length > 1 && styles.qtyTextMulti, isDone && styles.qtyTextDone]}>
+          {ids.length}×{' '}
+        </Text>
+      );
+      return (
+      // Jede Position hat rechts einen eigenen, großen Haken-Button — abgehakt wird NUR
+      // über ihn, nicht mehr über die ganze Zeile, damit ein flüchtiges Antippen der
+      // Karte (z.B. beim Scrollen) nicht aus Versehen die falsche Position abhakt.
+      // Abgehakte Positionen bleiben auf dem Ticket stehen (grüner Haken, grau/
+      // durchgestrichen); erneutes Antippen des Hakens macht das rückgängig.
+      <View key={key} style={[styles.itemRow, large && styles.itemRowLarge]}>
+      <View style={[styles.itemText, isDone && styles.itemTextDone]}>
+        {item.menu_item.name_hanzi ? (
+          <>
+            <Text
+              style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
+            >
+              {qtyPrefix}
+              {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
+              {item.menu_item.name_hanzi}
+              {item.variant_hanzi ? ` · ${item.variant_hanzi}` : ''}
+              {spiceSuffix(item.spice_level, 'zh')}
+            </Text>
+            <Text style={[styles.itemDe, large && styles.itemDeLarge, item.status === 'fertig' && styles.itemDone]}>
+              {item.menu_item.name_de}
+              {item.variant_de ? ` · ${item.variant_de}` : ''}
+              {spiceSuffix(item.spice_level, 'de')}
+            </Text>
+          </>
+        ) : (
+          // Bar-Items haben kein Hanzi (an der Bar wird auf Deutsch gearbeitet) —
+          // deutschen Namen dann in der großen/fetten Zeile zeigen statt einer leeren
+          // Hanzi-Zeile über einem winzigen deutschen Namen darunter.
+          <Text
+            style={[styles.itemHanzi, large && styles.itemHanziLarge, item.status === 'fertig' && styles.itemDone]}
+          >
+            {qtyPrefix}
+            {item.menu_item.item_code ? `${item.menu_item.item_code} · ` : ''}
+            {item.menu_item.name_de}
+            {item.variant_de ? ` · ${item.variant_de}` : ''}
+          </Text>
+        )}
+        {item.extras && item.extras.length > 0 && (
+          // Eigene auffällige Sprechblase statt nur kursivem Text — Extras (z.B.
+          // Ajitama-Ei/Mais bei Ramen) wurden von der Küche regelmäßig übersehen, wenn
+          // sie nur als kleine Textzeile zwischen Gericht und Notiz stand. Fester
+          // Amber-Ton (nicht colors.warning) + Icon, damit sie unabhängig von Hell-/
+          // Dunkelmodus und auch beim flüchtigen Blick auf die Karte sofort auffällt.
+          <View
+            style={[
+              styles.itemExtrasBadge,
+              large && styles.itemExtrasBadgeLarge,
+              item.status === 'fertig' && styles.itemExtrasBadgeDone,
+            ]}
+          >
+            <Text
+              style={[
+                styles.itemExtrasText,
+                large && styles.itemExtrasTextLarge,
+                item.status === 'fertig' && styles.itemExtrasTextDone,
+              ]}
+            >
+              ➕ {item.extras.map((e) => `${e.quantity} ${e.name_hanzi} (${e.name_de})`).join(', ')}
+            </Text>
+          </View>
+        )}
+        {item.note && (
+          <Text
+            style={[styles.itemNote, large && styles.itemNoteLarge, item.status === 'fertig' && styles.itemDone]}
+          >
+            💬 {item.note}
+          </Text>
+        )}
+      </View>
+      <TouchableOpacity
+        onPress={() => onToggleItem(ids, isDone ? 'offen' : 'fertig')}
+        style={[styles.checkButton, large && styles.checkButtonLarge, isDone && styles.checkButtonDone]}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: isDone }}
+        accessibilityLabel={isDone ? t('markOpen') : t('markDone')}
+      >
+        <Text style={[styles.checkButtonText, large && styles.checkButtonTextLarge, isDone && styles.checkButtonTextDone]}>
+          ✓
+        </Text>
+      </TouchableOpacity>
+      </View>
+      );
+      })}
+      {allowComplete && openGroupCount > 1 && (
+        // Hakt alle noch offenen Positionen des Tickets auf einmal ab — als breiter
+        // Button unten auf der Karte (vorher ein kleines "×" oben rechts, das eher nach
+        // Löschen/Schließen aussah als nach "alles fertig"). Nur sichtbar, wenn noch
+        // mehr als eine Position offen ist — bei einer einzigen reicht ihr eigener Haken.
+        <TouchableOpacity
+          onPress={() => onCompleteOrder?.(order)}
+          style={[styles.completeAllButton, large && styles.completeAllButtonLarge]}
+          accessibilityLabel={t('markAllDone')}
+        >
+          <Text style={[styles.completeAllButtonText, large && styles.completeAllButtonTextLarge]}>
+            {completeAllLabel}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  // In der Zwei-Spalten-Kartenansicht (columns=2) braucht der eigentliche Grid-
+  // Slot — egal ob rohe Karte oder Swipeable-Wrapper — flex:1, sonst füllt die Karte
+  // nicht die ihr per columnWrapperStyle zugewiesene Spaltenbreite aus.
+  if (!allowComplete) {
+    return inGrid ? <View style={styles.cardInRow}>{card}</View> : card;
+  }
+
+  // Wisch-Geste als zweiter Weg (neben dem X-Button oben), eine ganze Karte auf
+  // einmal abzuhaken — z.B. wenn eine Hand gerade an Töpfen/Tellern beschäftigt
+  // ist und ein Wisch schneller geht als gezielt den kleinen X-Button zu treffen.
+  // renderRightActions zeigt das grüne Aktionsfeld, während nach links gewischt
+  // wird (der Inhalt rutscht dabei nach links, das Feld erscheint von rechts).
+  // onSwipeableOpen löst direkt beim vollständigen Öffnen aus, ohne dass zusätzlich
+  // noch auf das Aktionsfeld getippt werden müsste — ein durchgezogener Wisch reicht.
+  const swipeable = (
+    <Swipeable
+      renderRightActions={() => (
+        <View style={[styles.swipeCompleteAction, large && styles.swipeCompleteActionLarge]}>
+          <Text style={[styles.swipeCompleteActionText, large && styles.swipeCompleteActionTextLarge]}>
+            {t('swipeDone')}
+          </Text>
+        </View>
+      )}
+      onSwipeableOpen={(direction) => {
+        if (direction === 'right') onCompleteOrder?.(order);
+      }}
+      overshootRight={false}
+      rightThreshold={40}
+    >
+      {card}
+    </Swipeable>
+  );
+
+  return inGrid ? <View style={styles.cardInRow}>{swipeable}</View> : swipeable;
 }
 
 const createStyles = (colors: ThemeColors) =>
@@ -1263,27 +1901,42 @@ const createStyles = (colors: ThemeColors) =>
       marginBottom: 8,
       gap: 8,
     },
-    tableLabel: { fontSize: 18, fontWeight: '700', color: colors.text },
+    // Tischnummer ist die wichtigste Info auf dem Ticket — darf nie abgeschnitten werden;
+    // bei schmalen Karten bricht stattdessen die rechte Seite (Zeit/Fortschritt) um.
+    tableLabel: { fontSize: 18, fontWeight: '700', color: colors.text, flexShrink: 0 },
     tableLabelLarge: { fontSize: 28 },
-    cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    cardHeaderRight: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 6,
+      flexShrink: 1,
+    },
     timeLabel: { fontSize: 13, color: colors.textMuted, fontWeight: '600' },
     timeLabelLarge: { fontSize: 18 },
-    // X-Button zum Abhaken der ganzen Karte auf einmal (siehe TicketList) — bewusst als
-    // dezenter Kreis statt eines auffälligen roten Buttons, damit er im hektischen
-    // Küchenbetrieb nicht mit einem Fehler-/Löschen-Signal verwechselt wird; das eigentliche
-    // "Fertig"-Signal kommt über die Kartenfarbe (siehe cardBackgroundFor), sobald alle
-    // Items abgehakt sind.
-    cardCloseButton: {
-      width: 26,
-      height: 26,
-      borderRadius: 13,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceAlt,
+    // Fortschritts-Pille "✓ 2/3" im Karten-Kopf (siehe TicketList).
+    progressPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
+      backgroundColor: 'rgba(0,0,0,0.08)',
     },
-    cardCloseButtonLarge: { width: 38, height: 38, borderRadius: 19 },
-    cardCloseButtonText: { fontSize: 16, fontWeight: '700', color: colors.textSecondary, lineHeight: 18 },
-    cardCloseButtonTextLarge: { fontSize: 22, lineHeight: 24 },
+    progressPillLarge: { paddingHorizontal: 12, paddingVertical: 5 },
+    progressPillText: { fontSize: 12, fontWeight: '800', color: colors.textSecondary },
+    progressPillTextLarge: { fontSize: 17 },
+    // "✓ 全部完成"-Button unten auf der Karte: hakt alle offenen Positionen auf einmal ab.
+    completeAllButton: {
+      marginTop: 8,
+      paddingVertical: 8,
+      borderRadius: 10,
+      borderWidth: 1.5,
+      borderColor: colors.success,
+      alignItems: 'center',
+    },
+    completeAllButtonLarge: { marginTop: 12, paddingVertical: 12, borderRadius: 12 },
+    completeAllButtonText: { fontSize: 13, fontWeight: '800', color: colors.success, textAlign: 'center' },
+    completeAllButtonTextLarge: { fontSize: 18 },
     // Grünes Aktionsfeld, das beim Wischen einer Karte nach links von rechts hereinrutscht
     // (siehe renderRightActions in TicketList) — dieselbe Breite muss nicht exakt zum
     // rightThreshold der Swipeable passen, das Feld ist nur die visuelle Rückmeldung.
@@ -1298,8 +1951,39 @@ const createStyles = (colors: ThemeColors) =>
     swipeCompleteActionLarge: { width: 130, borderRadius: 16 },
     swipeCompleteActionText: { color: '#fff', fontWeight: '700', fontSize: 14 },
     swipeCompleteActionTextLarge: { fontSize: 18 },
-    itemRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border },
-    itemRowLarge: { paddingVertical: 14 },
+    itemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 8,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    itemRowLarge: { paddingVertical: 14, gap: 14 },
+    itemText: { flex: 1 },
+    // Menge ("3×") vor dem Gerichtenamen, siehe qtyPrefix in TicketList. Erbt Schriftgröße
+    // der Zeile (normal/large), ab 2× in Akzentfarbe.
+    qtyText: { fontWeight: '900', color: colors.textSecondary },
+    qtyTextMulti: { color: colors.accent },
+    qtyTextDone: { color: colors.textFaint },
+    itemTextDone: { opacity: 0.6 },
+    // Haken-Button je Position: offen = leerer Kreis mit dezentem Haken als Hinweis,
+    // fertig = gefüllter grüner Kreis mit weißem Haken. Groß genug für nasse/fettige Finger.
+    checkButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      borderWidth: 2.5,
+      borderColor: colors.success,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkButtonLarge: { width: 58, height: 58, borderRadius: 29, borderWidth: 3 },
+    checkButtonDone: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
+    checkButtonText: { fontSize: 20, fontWeight: '900', color: colors.borderStrong, lineHeight: 24 },
+    checkButtonTextLarge: { fontSize: 30, lineHeight: 34 },
+    checkButtonTextDone: { color: '#ffffff' },
     itemHanzi: { fontSize: 18, fontWeight: '600', color: colors.text },
     itemHanziLarge: { fontSize: 28 },
     itemDe: { fontSize: 13, color: colors.textMuted },
@@ -1344,3 +2028,69 @@ const createStyles = (colors: ThemeColors) =>
     countCardVariant: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
     countCardVariantLarge: { fontSize: 18, marginTop: 4 },
   });
+
+// Handy-Variante der Board-Styles (siehe PhoneKitchenBoard): alle Basis-Styles plus
+// Überschreibungen für eine einspaltige Ansicht auf ~360–430px Breite — etwas größere
+// Schrift/Haken als die kompakte Tablet-Größe (eine Karte hat jetzt die volle Breite),
+// schlankere Kopfzeile, Banner untereinander statt nebeneinander, Stationen-Leiste.
+const createPhoneStyles = (colors: ThemeColors) => {
+  const base = createStyles(colors);
+  return StyleSheet.create({
+    ...base,
+    tab: { flex: 1, paddingVertical: 10, alignItems: 'center' },
+    tabTextHanzi: { ...base.tabTextHanzi, fontSize: 17 },
+    tabTextDe: { ...base.tabTextDe, fontSize: 11 },
+    bellButton: { paddingHorizontal: 12, paddingVertical: 8 },
+    phoneStationBar: {
+      flexDirection: 'row',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    phoneStationChip: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 6,
+      paddingHorizontal: 2,
+      borderRadius: 10,
+      backgroundColor: colors.surfaceAlt,
+    },
+    phoneStationChipActive: { backgroundColor: colors.accent },
+    phoneStationChipLabel: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+    phoneStationChipLabelActive: { color: colors.onAccent },
+    phoneStationChipCount: { fontSize: 18, fontWeight: '800', color: colors.textFaint, marginTop: 1 },
+    phoneStationChipCountHot: { color: colors.accent },
+    phoneStationChipCountActive: { color: colors.onAccent },
+    // Fixierte Abschnitts-Überschrift in "全部" — braucht einen Hintergrund, sonst scrollen
+    // die Karten sichtbar darunter durch.
+    stationHeader: {
+      ...base.stationHeader,
+      backgroundColor: colors.background,
+      paddingHorizontal: 4,
+      paddingTop: 10,
+      paddingBottom: 8,
+    },
+    stationHeaderText: { ...base.stationHeaderText, fontSize: 17 },
+    stationHeaderCount: { ...base.stationHeaderCount, fontSize: 13 },
+    listContent: { paddingHorizontal: 10, paddingTop: 4, paddingBottom: 32 },
+    card: { ...base.card, padding: 12, marginBottom: 10 },
+    swipeCompleteAction: { ...base.swipeCompleteAction, marginBottom: 10 },
+    tableLabel: { ...base.tableLabel, fontSize: 22 },
+    timeLabel: { ...base.timeLabel, fontSize: 14 },
+    itemRow: { ...base.itemRow, paddingVertical: 10 },
+    itemHanzi: { ...base.itemHanzi, fontSize: 20 },
+    itemDe: { ...base.itemDe, fontSize: 14 },
+    itemExtrasText: { ...base.itemExtrasText, fontSize: 15 },
+    itemNote: { ...base.itemNote, fontSize: 14 },
+    checkButton: { ...base.checkButton, width: 46, height: 46, borderRadius: 23 },
+    checkButtonText: { ...base.checkButtonText, fontSize: 22, lineHeight: 26 },
+    completeAllButton: { ...base.completeAllButton, paddingVertical: 12 },
+    completeAllButtonText: { ...base.completeAllButtonText, fontSize: 15 },
+    countCard: { ...base.countCard, marginBottom: 10 },
+    emptyBanner: { ...base.emptyBanner, flexDirection: 'column', gap: 16, paddingHorizontal: 16 },
+    emptyBannerText: { ...base.emptyBannerText, flex: 0, fontSize: 28, textAlign: 'center' },
+    emptyBannerImage: { width: 200, aspectRatio: 3 / 4 },
+  });
+};

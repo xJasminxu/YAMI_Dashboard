@@ -19,7 +19,10 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "output": "single",
+      "name": "YAMI Dashboard",
+      "shortName": "YAMI"
     },
     "plugins": [
       "expo-audio"

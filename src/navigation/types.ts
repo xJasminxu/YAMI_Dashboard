@@ -9,6 +9,10 @@ export type RootStackParamList = {
   Status: undefined;
   TableDetail: { tableNumber: number };
   TableOverview: undefined;
+  // Tagesumsatz (RevenueScreen.tsx) — eigener Menüpunkt, früher oben in der Tischübersicht.
+  Revenue: undefined;
+  // Admin-Modus (AdminScreen.tsx): Speisekarte bearbeiten + Protokoll, PIN-geschützt.
+  Admin: undefined;
   // closed: true → Aufruf aus "Vergangene Tische" (TableOverviewScreen.tsx). closedAt
   // identifiziert dabei genau EINEN Abschluss-Vorgang dieser Tischnummer (orders.closed_at,
   // exakt gleicher Zeitstempel für alle orders, die bei diesem "Tisch abschließen" auf

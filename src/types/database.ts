@@ -91,10 +91,25 @@ export interface OrderItem {
   // Abrechnung in der Tischübersicht. Bei Items ohne hinterlegten Preis null.
   unit_price: number | null;
   note: string | null;
+  // Schärfegrad 1-3 (mild/scharf/sehr scharf, siehe lib/spice.ts). null = nicht scharf.
+  spice_level: number | null;
   created_at: string;
   done_at: string | null;
   // null = in der vorläufigen Abrechnung noch nicht als bezahlt markiert (siehe
   // TableBillingScreen.tsx). In der DB statt nur lokalem Screen-Zustand, damit die
   // Zahlungsart auch nach "Tisch abschließen" unter "Vergangene Tische" erhalten bleibt.
   paid_method: PaymentMethod | null;
+}
+
+// Protokoll-Eintrag im Admin-Modus (siehe activity_log in schema.sql, lib/activityLog.ts).
+export type ActivityKind = 'table_deleted' | 'item_deleted' | 'discount_applied';
+
+export interface ActivityLogEntry {
+  id: string;
+  created_at: string;
+  kind: ActivityKind;
+  table_number: number | null;
+  summary: string;
+  amount: number | null;
+  details: { name: string; price: number | null }[] | null;
 }

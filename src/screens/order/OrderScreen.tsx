@@ -23,6 +23,9 @@ import type { RootStackParamList } from '../../navigation/types';
 import type { MenuGroup, MenuItem, VariantOption } from '../../types/database';
 import type { ThemeColors } from '../../theme/colors';
 import { useThemedStyles } from '../../theme/useThemedStyles';
+import { translate, useI18n, type Language } from '../../i18n/LanguageContext';
+import { categoryEmoji, MENU_GROUP_EMOJIS, titleCase } from '../../lib/emoji';
+import { SPICE_LABELS, SPICE_LEVELS, supportsSpiceLevel } from '../../lib/spice';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Order'>;
 
@@ -37,11 +40,11 @@ type OrderStyles = ReturnType<typeof createStyles>;
 // CartBar) statt eines unsichtbaren Overlays, das sich unabhängig vom Text bewegt hat.
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
 
-const MENU_GROUP_LABELS: Record<MenuGroup, string> = {
-  essen: 'Essen',
-  getraenke: 'Getränke',
-  nachspeisen: 'Nachspeisen',
-};
+// Getränke/Nachspeisen gehören zur Bar und bleiben deshalb auch auf Chinesisch Deutsch.
+function menuGroupLabel(group: MenuGroup, lang: Language): string {
+  if (group === 'essen') return translate(lang, 'groupFood');
+  return group === 'getraenke' ? 'Getränke' : 'Nachspeisen';
+}
 
 interface CartExtra {
   nameHanzi: string;
@@ -61,6 +64,8 @@ interface CartLine {
   unitPrice: number | null; // Preis für eine Portion Grundgericht/-getränk (inkl. Variante, exkl. Extras)
   extras: CartExtra[];
   note: string;
+  // 0 = nicht scharf, 1-3 = mild/scharf/sehr scharf (nur Hauptspeisen, siehe lib/spice.ts)
+  spiceLevel: number;
   quantity: number;
 }
 
@@ -71,8 +76,10 @@ function extrasSignature(extras: CartExtra[]) {
     .join('|');
 }
 
-function cartKeyFor(menuItemId: string, variantDe: string | null, extras: CartExtra[]) {
-  return `${menuItemId}::${variantDe ?? ''}::${extrasSignature(extras)}`;
+// Schärfegrad gehört mit zum Schlüssel: "2× Ramen scharf + 1× Ramen mild" sind zwei
+// Zeilen, weil die Küche sie unterschiedlich zubereitet.
+function cartKeyFor(menuItemId: string, variantDe: string | null, extras: CartExtra[], spiceLevel = 0) {
+  return `${menuItemId}::${variantDe ?? ''}::${extrasSignature(extras)}::${spiceLevel}`;
 }
 
 // Bearbeitbar (Variante/Extras/Beschreibung nachträglich ändern, siehe handleEditCartLine)
@@ -91,6 +98,9 @@ function lineUnitTotal(line: Pick<CartLine, 'unitPrice' | 'extras'>): number | n
   return (line.unitPrice ?? 0) + extrasSum;
 }
 
+// Feste Farben der Schärfe-Leiste (unabhängig von Hell/Dunkel): Gelb → Orange → Rot.
+const SPICE_COLORS: Record<number, string> = { 1: '#F59F00', 2: '#E8590C', 3: '#C92A2A' };
+
 function formatPrice(amount: number) {
   return `${amount.toFixed(2).replace('.', ',')} €`;
 }
@@ -106,17 +116,58 @@ function clamp(value: number, min: number, max: number) {
 const CART_ITEMS_COLLAPSED_HEIGHT = 0;
 const CART_ITEMS_EXPANDED_HEIGHT = 320;
 
+// Kategorie-Übersicht skaliert mit der verfügbaren Bildschirmhöhe, damit alle Buttons ohne
+// Scrollen sichtbar sind: aus der gemessenen Höhe der Liste (onLayout, also bereits ohne
+// Tischnummer-Feld und Warenkorb-Panel) wird die Button-Höhe berechnet, Schriftgrößen
+// skalieren mit. Unterhalb von CATEGORY_BUTTON_MIN_HEIGHT würde der Text nicht mehr
+// passen — dann wird (auf sehr kleinen Geräten) doch wieder gescrollt.
+// Die Konstanten müssen zu groupTitle/groupSection/categoryGrid in createStyles passen.
+const CATEGORY_COLUMNS = 3;
+const CATEGORY_BUTTON_MAX_HEIGHT = 104;
+const CATEGORY_BUTTON_MIN_HEIGHT = 68;
+const GROUP_TITLE_LINE_HEIGHT = 22;
+const GROUP_TITLE_MARGIN = 6;
+const GROUP_SECTION_MARGIN = 12;
+const CATEGORY_GRID_GAP = 8;
+const CATEGORY_LIST_PADDING_BOTTOM = 8;
+
+function computeCategorySizing(available: number | null, groupCounts: number[]) {
+  const rows = groupCounts.map((n) => Math.ceil(n / CATEGORY_COLUMNS));
+  const totalRows = rows.reduce((sum, r) => sum + r, 0);
+  const fixed =
+    groupCounts.length * (GROUP_TITLE_LINE_HEIGHT + GROUP_TITLE_MARGIN + GROUP_SECTION_MARGIN) +
+    rows.reduce((sum, r) => sum + (r - 1) * CATEGORY_GRID_GAP, 0) +
+    CATEGORY_LIST_PADDING_BOTTOM +
+    4; // kleiner Puffer gegen Rundungsfehler
+  // Solange noch nicht gemessen (erster Render) in voller Größe.
+  const buttonHeight =
+    !available || totalRows === 0
+      ? CATEGORY_BUTTON_MAX_HEIGHT
+      : clamp(Math.floor((available - fixed) / totalRows), CATEGORY_BUTTON_MIN_HEIGHT, CATEGORY_BUTTON_MAX_HEIGHT);
+  const scale = buttonHeight / CATEGORY_BUTTON_MAX_HEIGHT;
+  const textScale = Math.sqrt(scale); // Text schrumpft langsamer als das Emoji
+  return {
+    buttonHeight,
+    paddingVertical: Math.round(3 + 9 * scale),
+    emojiSize: Math.max(18, Math.round(32 * scale)),
+    emojiMargin: Math.round(4 * scale),
+    hanziSize: Math.max(13, Math.round(16 * textScale)),
+    deSize: Math.max(10, Math.round(12 * textScale)),
+  };
+}
+
 // Preis-Anzeige für die Item-Liste: fixer Preis, "ab X€" wenn der Preis erst per
 // Variante feststeht (z.B. Fried Chicken 4/8 Stück), oder nichts, falls noch kein
 // Preis hinterlegt ist.
-function itemPriceLabel(item: MenuItem): string | null {
+function itemPriceLabel(item: MenuItem, lang: Language): string | null {
   if (item.price !== null) return formatPrice(item.price);
   const variantPrices = (item.variant_options ?? []).map((v) => v.price).filter((p): p is number => p !== undefined);
-  if (variantPrices.length > 0) return `ab ${formatPrice(Math.min(...variantPrices))}`;
+  if (variantPrices.length > 0) return translate(lang, 'fromPrice', { price: formatPrice(Math.min(...variantPrices)) });
   return null;
 }
 
 export default function OrderScreen({ route }: Props) {
+  const { lang, t } = useI18n();
   const navigation = useNavigation();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
@@ -140,7 +191,6 @@ export default function OrderScreen({ route }: Props) {
   // statt eine neue hinzuzufügen — z.B. wenn beim Ramen doch noch last-minute ein Extra
   // dazu soll, bevor die Bestellung abgeschickt ist.
   const [editingCartKey, setEditingCartKey] = useState<string | null>(null);
-  const [rabattDialogOpen, setRabattDialogOpen] = useState(false);
   const [numpadOpen, setNumpadOpen] = useState(false);
   const [noteEditLine, setNoteEditLine] = useState<CartLine | null>(null);
   const [leaveConfirmVisible, setLeaveConfirmVisible] = useState(false);
@@ -243,16 +293,17 @@ export default function OrderScreen({ route }: Props) {
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.headerBackButton}
         >
-          <Text style={styles.headerBackButtonText}>‹ Hauptmenü</Text>
+          <Text style={styles.headerBackButtonText}>{t('backToHome')}</Text>
         </TouchableOpacity>
       ),
     });
-  }, [navigation]);
+  }, [navigation, t]);
 
   const groupedCategories = useMemo(() => {
     const groups: Record<MenuGroup, typeof categories> = { essen: [], getraenke: [], nachspeisen: [] };
     for (const category of categories) {
-      // Rabatt ist kein Menü-Button — eigener Button unten (siehe rabattItem), nicht Teil
+      // Rabatt ist kein Menü-Button — wird seit Kurzem in Tischübersicht/Abrechnung direkt auf
+      // den Tisch gebucht (components/DiscountDialog.tsx), nicht mehr hier. Nicht Teil
       // des Essen/Getränke/Nachspeisen-Rasters.
       if (category.is_discount) continue;
       groups[category.menu_group].push(category);
@@ -260,9 +311,22 @@ export default function OrderScreen({ route }: Props) {
     return groups;
   }, [categories]);
 
-  // Das einzelne Item der Rabatt-Kategorie (siehe seed.sql) — trägt Beschreibung + Betrag
-  // huckepack über den Varianten-Mechanismus wie das Diverses-Item (siehe confirmRabatt).
-  const rabattItem = useMemo(() => categories.find((c) => c.is_discount)?.items[0] ?? null, [categories]);
+  const visibleGroups = useMemo(
+    () => (Object.keys(groupedCategories) as MenuGroup[]).filter((g) => groupedCategories[g].length > 0),
+    [groupedCategories]
+  );
+  const [categoryListHeight, setCategoryListHeight] = useState<number | null>(null);
+  const categorySizing = useMemo(
+    () => computeCategorySizing(categoryListHeight, visibleGroups.map((g) => groupedCategories[g].length)),
+    [categoryListHeight, visibleGroups, groupedCategories]
+  );
+  const categoryButtonSizeStyle = {
+    minHeight: categorySizing.buttonHeight,
+    paddingVertical: categorySizing.paddingVertical,
+  };
+  const categoryEmojiSizeStyle = { fontSize: categorySizing.emojiSize, marginBottom: categorySizing.emojiMargin };
+  const categoryHanziSizeStyle = { fontSize: categorySizing.hanziSize };
+  const categoryDeSizeStyle = { fontSize: categorySizing.deSize };
 
   // Nachschlagen des vollen MenuItem (inkl. variant_options/extra_options) zu einer
   // Warenkorb-Zeile — die Zeile selbst kennt nur menuItemId, für den Bearbeiten-Dialog
@@ -273,6 +337,15 @@ export default function OrderScreen({ route }: Props) {
       for (const item of category.items) map.set(item.id, item);
     }
     return map;
+  }, [categories]);
+
+  // Gerichte, bei denen in der Bestellübersicht ein Schärfegrad einstellbar ist (Hauptspeisen).
+  const spiceableItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const category of categories) {
+      for (const item of category.items) if (supportsSpiceLevel(item, category)) ids.add(item.id);
+    }
+    return ids;
   }, [categories]);
 
   // Die gerade zum Bearbeiten geöffnete Warenkorb-Zeile (siehe editingCartKey) — liefert
@@ -310,6 +383,7 @@ export default function OrderScreen({ route }: Props) {
           unitPrice,
           extras,
           note: '',
+          spiceLevel: 0,
           quantity: 1,
         },
       ];
@@ -329,7 +403,7 @@ export default function OrderScreen({ route }: Props) {
       if (!line) return prev;
 
       const unitPrice = variant?.price ?? item.price ?? null;
-      const newCartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras);
+      const newCartKey = cartKeyFor(item.id, variant?.name_de ?? null, extras, line.spiceLevel);
 
       if (newCartKey === cartKey) {
         return prev.map((l) =>
@@ -351,6 +425,24 @@ export default function OrderScreen({ route }: Props) {
           ? { ...l, cartKey: newCartKey, variantHanzi: variant?.name_hanzi ?? null, variantDe: variant?.name_de ?? null, unitPrice, extras }
           : l
       );
+    });
+  }
+
+  // Wie updateCartLine: der neue Schärfegrad ändert den cartKey — trifft er dabei eine
+  // bereits existierende Zeile (gleiches Gericht mit diesem Schärfegrad), werden die
+  // Mengen zusammengeführt.
+  function setSpiceLevel(cartKey: string, spiceLevel: number) {
+    setCart((prev) => {
+      const line = prev.find((l) => l.cartKey === cartKey);
+      if (!line || line.spiceLevel === spiceLevel) return prev;
+      const newCartKey = cartKeyFor(line.menuItemId, line.variantDe, line.extras, spiceLevel);
+      const collision = prev.find((l) => l.cartKey === newCartKey);
+      if (collision) {
+        return prev
+          .filter((l) => l.cartKey !== cartKey)
+          .map((l) => (l.cartKey === newCartKey ? { ...l, quantity: l.quantity + line.quantity } : l));
+      }
+      return prev.map((l) => (l.cartKey === cartKey ? { ...l, cartKey: newCartKey, spiceLevel } : l));
     });
   }
 
@@ -424,15 +516,6 @@ export default function OrderScreen({ route }: Props) {
     setCustomEntryItem(null);
   }
 
-  function confirmRabatt(description: string, amount: number) {
-    if (!rabattItem) return;
-    const label = description.trim() || 'Rabatt';
-    // Wie confirmCustomEntry: Beschreibung + (negativer) Betrag fahren huckepack auf dem
-    // Varianten-Mechanismus mit, statt eines eigenen Datenpfads.
-    addToCart(rabattItem, { name_hanzi: label, name_de: label, price: -Math.abs(amount) });
-    setRabattDialogOpen(false);
-  }
-
   function confirmOptions(variant: VariantOption | null, extras: CartExtra[]) {
     if (!optionsPromptItem) return;
     const filteredExtras = extras.filter((e) => e.quantity > 0);
@@ -467,7 +550,7 @@ export default function OrderScreen({ route }: Props) {
       .single();
 
     if (tableError || !table) {
-      setSubmitError(tableError?.message ?? 'Tisch konnte nicht angelegt werden.');
+      setSubmitError(tableError?.message ?? t('tableCreateError'));
       setSubmitting(false);
       return;
     }
@@ -479,17 +562,12 @@ export default function OrderScreen({ route }: Props) {
       .single();
 
     if (orderError || !order) {
-      setSubmitError(orderError?.message ?? 'Bestellung konnte nicht angelegt werden.');
+      setSubmitError(orderError?.message ?? t('orderCreateError'));
       setSubmitting(false);
       return;
     }
 
     const rows = cart.flatMap((line) => {
-      // Rabatt-Positionen sind nichts zum Zubereiten (siehe rabattItem/confirmRabatt) —
-      // gehen deshalb direkt als "fertig" rein, statt in Küche/Bar als offen zu hängen
-      // (DeviceTicketBoard.tsx blendet sie zwar ohnehin aus, aber ohne done_at würden sie
-      // z.B. in StatusScreen.tsx die Fortschritts-Zählung eines Tisches verfälschen).
-      const isRabatt = line.menuItemId === rabattItem?.id;
       return Array.from({ length: line.quantity }, () => ({
         order_id: order.id,
         menu_item_id: line.menuItemId,
@@ -501,7 +579,7 @@ export default function OrderScreen({ route }: Props) {
             : null,
         unit_price: line.unitPrice,
         note: line.note.trim() ? line.note.trim() : null,
-        ...(isRabatt ? { status: 'fertig' as const, done_at: new Date().toISOString() } : {}),
+        spice_level: line.spiceLevel > 0 ? line.spiceLevel : null,
       }));
     });
 
@@ -530,7 +608,7 @@ export default function OrderScreen({ route }: Props) {
   if (error) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Menü konnte nicht geladen werden: {error}</Text>
+        <Text style={styles.errorText}>{t('menuLoadError', { error })}</Text>
       </View>
     );
   }
@@ -542,21 +620,33 @@ export default function OrderScreen({ route }: Props) {
   // erst zum Vorschein, sobald man in den Zweig mit dem Dialog zurücknavigierte).
   return (
     <View style={styles.container}>
+      {/* Zentrierte Inhaltsspalte mit maximaler Breite — auf dem iPad/im Querformat
+          klebte sonst alles am linken Rand und die Kategorie-Buttons zogen sich über
+          die ganze Bildschirmbreite. */}
+      <View style={styles.content}>
       {activeCategory ? (
         <>
           <TouchableOpacity onPress={() => setActiveCategoryId(null)} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Kategorien</Text>
+            <Text style={styles.backButtonText}>{t('backToCategories')}</Text>
           </TouchableOpacity>
-          <Text style={styles.sectionTitle}>{activeCategory.name_de}</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionEmoji}>
+              {categoryEmoji(activeCategory.name_de, activeCategory.menu_group)}
+            </Text>
+            <View>
+              <Text style={styles.sectionTitle}>{titleCase(activeCategory.name_de)}</Text>
+              {activeCategory.name_hanzi && <Text style={styles.sectionHanzi}>{activeCategory.name_hanzi}</Text>}
+            </View>
+          </View>
           <FlatList
             data={activeCategory.items}
             keyExtractor={(item) => item.id}
             // Die schwebende "Zur Bestellung"-Pille (CartBar) liegt absolut positioniert
             // über der Liste — ohne diesen Puffer verdeckt sie die letzten Einträge einer
             // langen Kategorie (z.B. "Alkoholfreie Getränke").
-            contentContainerStyle={{ paddingBottom: cartBarBottomOffset + 80 }}
+            contentContainerStyle={{ paddingBottom: cartBarBottomOffset + 80, gap: 8 }}
             renderItem={({ item }) => (
-              <TouchableOpacity style={styles.itemRow} onPress={() => handleItemPress(item)}>
+              <TouchableOpacity style={styles.itemRow} onPress={() => handleItemPress(item)} activeOpacity={0.7}>
                 {item.item_code && (
                   <View style={styles.itemCodeBadge}>
                     <Text style={styles.itemCodeText}>{item.item_code}</Text>
@@ -575,7 +665,12 @@ export default function OrderScreen({ route }: Props) {
                     <Text style={styles.itemHanzi}>{item.name_de}</Text>
                   )}
                 </View>
-                {itemPriceLabel(item) && <Text style={styles.itemPrice}>{itemPriceLabel(item)}</Text>}
+                {itemPriceLabel(item, lang) && (
+                  <View style={styles.itemPricePill}>
+                    <Text style={styles.itemPrice}>{itemPriceLabel(item, lang)}</Text>
+                  </View>
+                )}
+                <Text style={styles.itemAdd}>＋</Text>
               </TouchableOpacity>
             )}
           />
@@ -589,9 +684,14 @@ export default function OrderScreen({ route }: Props) {
         </>
       ) : (
         <>
-          <TouchableOpacity style={styles.tableInput} onPress={() => setNumpadOpen(true)}>
-            <Text style={tableNumber ? styles.tableInputValue : styles.tableInputPlaceholder}>
-              {tableNumber || 'Tischnummer eingeben'}
+          <TouchableOpacity
+            style={[styles.tableInput, !!tableNumber && styles.tableInputFilled]}
+            onPress={() => setNumpadOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.tableInputEmoji}>🪑</Text>
+            <Text style={tableNumber ? styles.tableInputValueLarge : styles.tableInputPlaceholder}>
+              {tableNumber ? t('table', { n: tableNumber }) : t('enterTableNumber')}
             </Text>
           </TouchableOpacity>
           <NumpadDialog
@@ -602,24 +702,19 @@ export default function OrderScreen({ route }: Props) {
             styles={styles}
           />
 
-          {rabattItem && (
-            <TouchableOpacity style={styles.rabattButton} onPress={() => setRabattDialogOpen(true)}>
-              <Text style={styles.rabattButtonText}>− Rabatt hinzufügen</Text>
-            </TouchableOpacity>
-          )}
-          <RabattDialog
-            visible={rabattDialogOpen}
-            onConfirm={confirmRabatt}
-            onCancel={() => setRabattDialogOpen(false)}
-            styles={styles}
-          />
-
           <FlatList
-            data={(Object.keys(groupedCategories) as MenuGroup[]).filter((g) => groupedCategories[g].length > 0)}
+            data={visibleGroups}
             keyExtractor={(group) => group}
+            onLayout={(e) => {
+              const h = Math.round(e.nativeEvent.layout.height);
+              setCategoryListHeight((prev) => (prev === h ? prev : h));
+            }}
+            contentContainerStyle={styles.categoryListContent}
             renderItem={({ item: group }) => (
               <View style={styles.groupSection}>
-                <Text style={styles.groupTitle}>{MENU_GROUP_LABELS[group]}</Text>
+                <Text style={styles.groupTitle}>
+                  {MENU_GROUP_EMOJIS[group]} {menuGroupLabel(group, lang)}
+                </Text>
                 <View style={styles.categoryGrid}>
                   {groupedCategories[group].map((category) => {
                     // Kategorien mit einem "Diverses"-Item (siehe seed.sql) verhalten sich wie
@@ -634,20 +729,24 @@ export default function OrderScreen({ route }: Props) {
                     return (
                       <TouchableOpacity
                         key={category.id}
-                        style={styles.categoryButton}
+                        style={[styles.categoryButton, categoryButtonSizeStyle]}
+                        activeOpacity={0.75}
                         onPress={() =>
                           soleCustomItem ? setCustomEntryItem(soleCustomItem) : setActiveCategoryId(category.id)
                         }
                       >
+                        <Text style={[styles.categoryEmoji, categoryEmojiSizeStyle]}>
+                          {categoryEmoji(category.name_de, category.menu_group)}
+                        </Text>
                         {category.name_hanzi ? (
                           <>
-                            <Text style={styles.categoryHanzi}>{category.name_hanzi}</Text>
-                            <Text style={styles.categoryDe}>{category.name_de}</Text>
+                            <Text style={[styles.categoryHanzi, categoryHanziSizeStyle]}>{category.name_hanzi}</Text>
+                            <Text style={[styles.categoryDe, categoryDeSizeStyle]}>{titleCase(category.name_de)}</Text>
                           </>
                         ) : (
                           // Bar-Kategorien (Getränke/Nachspeisen) haben kein Hanzi — deutschen
                           // Namen dann groß/prominent zeigen statt einer leeren Hanzi-Zeile.
-                          <Text style={styles.categoryHanzi}>{category.name_de}</Text>
+                          <Text style={[styles.categoryHanzi, categoryHanziSizeStyle]}>{titleCase(category.name_de)}</Text>
                         )}
                       </TouchableOpacity>
                     );
@@ -667,7 +766,7 @@ export default function OrderScreen({ route }: Props) {
               >
                 <View style={styles.cartHandleBar} />
                 <Animated.Text style={[styles.cartHandleText, { transform: [{ scale: cartBumpScale }] }]}>
-                  {cartCount} im Warenkorb · {formatPrice(cartTotal)} {cartExpanded ? '▾' : '▴'}
+                  {t('cartSummary', { n: cartCount, sum: formatPrice(cartTotal) })} {cartExpanded ? '▾' : '▴'}
                 </Animated.Text>
               </TouchableOpacity>
               <Animated.View style={[styles.cartItemsWrap, { height: cartItemsHeight }]}>
@@ -696,12 +795,42 @@ export default function OrderScreen({ route }: Props) {
                               {formatPrice(lineUnitTotal(line)! * line.quantity)}
                             </Text>
                           )}
+                          {spiceableItemIds.has(line.menuItemId) && (
+                            // Schärfe-Leiste: Segmente bis zum gewählten Grad sind gefüllt.
+                            // Antippen des bereits gewählten Grads setzt zurück auf nicht scharf.
+                            <View style={styles.spiceBarRow}>
+                              <Text style={styles.spiceBarIcon}>🌶️</Text>
+                              <View style={styles.spiceBar}>
+                                {SPICE_LEVELS.map((level) => {
+                                  const filled = level <= line.spiceLevel;
+                                  return (
+                                    <TouchableOpacity
+                                      key={level}
+                                      style={[
+                                        styles.spiceSegment,
+                                        level > 1 && styles.spiceSegmentDivider,
+                                        filled && { backgroundColor: SPICE_COLORS[level] },
+                                      ]}
+                                      onPress={() => setSpiceLevel(line.cartKey, line.spiceLevel === level ? 0 : level)}
+                                      accessibilityRole="adjustable"
+                                      accessibilityState={{ selected: line.spiceLevel === level }}
+                                      accessibilityLabel={SPICE_LABELS[level][lang]}
+                                    >
+                                      <Text style={[styles.spiceSegmentText, filled && styles.spiceSegmentTextFilled]}>
+                                        {SPICE_LABELS[level][lang]}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </View>
+                            </View>
+                          )}
                           <TouchableOpacity style={styles.noteField} onPress={() => setNoteEditLine(line)}>
                             <Text
                               style={line.note ? styles.noteFieldText : styles.noteFieldPlaceholder}
                               numberOfLines={2}
                             >
-                              {line.note || 'Notiz…'}
+                              {line.note ? `💬 ${line.note}` : t('notePlaceholder')}
                             </Text>
                           </TouchableOpacity>
                         </View>
@@ -711,7 +840,7 @@ export default function OrderScreen({ route }: Props) {
                             style={styles.cartLineEditButton}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           >
-                            <Text style={styles.cartLineEditButtonText}>✎</Text>
+                            <Text style={styles.cartLineEditButtonText}>✏️</Text>
                           </TouchableOpacity>
                         )}
                         <TouchableOpacity onPress={() => removeFromCart(line.cartKey)}>
@@ -725,12 +854,13 @@ export default function OrderScreen({ route }: Props) {
               {submitError && <Text style={styles.errorText}>{submitError}</Text>}
               <View style={styles.cartTotalRow}>
                 <Text style={styles.cartTotalLabel}>
-                  Summe{cartHasUnpricedItem ? ' (unvollständig, s.u.)' : ''}
+                  {t('sum')}
+                  {cartHasUnpricedItem ? t('sumIncomplete') : ''}
                 </Text>
                 <Text style={styles.cartTotalValue}>{formatPrice(cartTotal)}</Text>
               </View>
               {cartHasUnpricedItem && (
-                <Text style={styles.cartTotalNote}>Enthält Positionen ohne hinterlegten Preis.</Text>
+                <Text style={styles.cartTotalNote}>{t('unpricedNote')}</Text>
               )}
               <TouchableOpacity
                 style={[styles.submitButton, (!tableNumber || submitting) && styles.submitButtonDisabled]}
@@ -738,13 +868,14 @@ export default function OrderScreen({ route }: Props) {
                 disabled={!tableNumber || submitting}
               >
                 <Text style={styles.submitButtonText}>
-                  {submitting ? 'Wird gesendet…' : `Bestellung senden (${cartCount})`}
+                  {submitting ? t('sending') : !tableNumber ? t('chooseTableFirst') : t('sendOrder', { n: cartCount })}
                 </Text>
               </TouchableOpacity>
             </View>
           )}
         </>
       )}
+      </View>
       <VariantDialog
         item={variantPromptItem}
         onChoose={chooseVariant}
@@ -808,6 +939,7 @@ function NumpadDialog({
   onDone: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   // onChange schreibt bei jedem Tastendruck direkt in die Tischnummer des Eltern-Screens
   // (für die Live-Anzeige hinter dem Dialog), "Abbrechen" muss also den Stand von vor dem
   // Öffnen separat merken, um ihn zurückzuschreiben, statt nur den Dialog zu schließen.
@@ -837,7 +969,7 @@ function NumpadDialog({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCancel}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Tischnummer</Text>
+          <Text style={styles.modalTitle}>{t('tableNumberTitle')}</Text>
           <Text style={styles.numpadDisplay}>{value || '—'}</Text>
           <View style={styles.numpadGrid}>
             {NUMPAD_KEYS.map((key) => (
@@ -851,10 +983,10 @@ function NumpadDialog({
             onPress={onDone}
             disabled={!value}
           >
-            <Text style={styles.submitButtonText}>Fertig</Text>
+            <Text style={styles.submitButtonText}>{t('done')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={handleCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -876,19 +1008,21 @@ function LeaveConfirmDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Bestellung verwerfen?</Text>
+          <Text style={styles.modalEmoji}>⚠️</Text>
+          <Text style={styles.modalTitle}>{t('discardTitle')}</Text>
           <Text style={styles.modalSubtitle}>
-            Die aufgenommene Bestellung ist noch nicht abgeschickt und geht beim Verlassen verloren.
+            {t('discardBody')}
           </Text>
           <TouchableOpacity style={styles.leaveConfirmButton} onPress={onConfirm}>
-            <Text style={styles.submitButtonText}>Ja, verwerfen</Text>
+            <Text style={styles.submitButtonText}>{t('discardConfirm')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.leaveConfirmCancelText}>Zurück zur Bestellung</Text>
+            <Text style={styles.leaveConfirmCancelText}>{t('backToOrder')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -909,13 +1043,14 @@ function CartBar({
   bumpScale: Animated.Value;
   bottomOffset: number;
 }) {
+  const { t } = useI18n();
   if (cartCount === 0) return null;
   return (
     <AnimatedTouchableOpacity
       style={[styles.cartBarMini, { bottom: bottomOffset, transform: [{ scale: bumpScale }] }]}
       onPress={onPress}
     >
-      <Text style={styles.cartBarMiniText}>{cartCount} im Warenkorb · Zur Bestellung →</Text>
+      <Text style={styles.cartBarMiniText}>{t('cartToOrder', { n: cartCount })}</Text>
     </AnimatedTouchableOpacity>
   );
 }
@@ -931,6 +1066,7 @@ function VariantDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   return (
     <Modal visible={item !== null} transparent animationType="fade" onRequestClose={onCancel}>
       <View style={styles.modalOverlay}>
@@ -951,7 +1087,7 @@ function VariantDialog({
             </TouchableOpacity>
           ))}
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -981,6 +1117,7 @@ function CustomEntryDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   const [description, setDescription] = useState('');
   const [priceText, setPriceText] = useState('');
   const [priceNumpadOpen, setPriceNumpadOpen] = useState(false);
@@ -1018,14 +1155,14 @@ function CustomEntryDialog({
           <Text style={styles.modalSubtitle}>{item.name_de}</Text>
           <TextInput
             style={styles.customEntryInput}
-            placeholder="Beschreibung"
+            placeholder={t('description')}
             value={description}
             onChangeText={setDescription}
             autoFocus
           />
           <TouchableOpacity style={styles.customEntryInput} onPress={() => setPriceNumpadOpen(true)}>
             <Text style={priceText ? styles.tableInputValue : styles.tableInputPlaceholder}>
-              {priceText ? `${priceText} €` : 'Preis eingeben'}
+              {priceText ? `${priceText} €` : t('enterPrice')}
             </Text>
           </TouchableOpacity>
           <PriceNumpadDialog
@@ -1041,94 +1178,11 @@ function CustomEntryDialog({
             disabled={!canConfirm}
           >
             <Text style={styles.submitButtonText}>
-              {editing ? 'Änderungen übernehmen' : 'Zum Warenkorb hinzufügen'}
+              {editing ? t('applyChanges') : t('addToCart')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-// Dialog für die Rabatt-Kategorie (siehe rabattItem/confirmRabatt): Bedienung trägt eine
-// optionale Beschreibung + einen Betrag ein, der als Preis-Abzug (negativer Preis) in den
-// Warenkorb wandert. Strukturell fast identisch zu CustomEntryDialog, aber Beschreibung
-// ist hier optional (fällt auf "Rabatt" zurück) statt Pflichtfeld, und der Betrag wird
-// beim Bestätigen negiert statt roh übernommen.
-function RabattDialog({
-  visible,
-  onConfirm,
-  onCancel,
-  styles,
-}: {
-  visible: boolean;
-  onConfirm: (description: string, amount: number) => void;
-  onCancel: () => void;
-  styles: OrderStyles;
-}) {
-  const [description, setDescription] = useState('');
-  const [amountText, setAmountText] = useState('');
-  const [amountNumpadOpen, setAmountNumpadOpen] = useState(false);
-
-  // Bei jedem Öffnen die lokale Eingabe zurücksetzen (gleiches Muster wie CustomEntryDialog).
-  const [resetForOpen, setResetForOpen] = useState(false);
-  if (visible !== resetForOpen) {
-    setResetForOpen(visible);
-    if (visible) {
-      setDescription('');
-      setAmountText('');
-      setAmountNumpadOpen(false);
-    }
-  }
-
-  const normalized = amountText.trim().replace(',', '.');
-  const parsedAmount = normalized ? Number.parseFloat(normalized) : NaN;
-  const canConfirm = Number.isFinite(parsedAmount) && parsedAmount > 0;
-
-  function handleConfirm() {
-    if (!canConfirm) return;
-    onConfirm(description, parsedAmount);
-  }
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <KeyboardAvoidingView
-        style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Rabatt</Text>
-          <TextInput
-            style={styles.customEntryInput}
-            placeholder="Beschreibung (optional)"
-            value={description}
-            onChangeText={setDescription}
-            autoFocus
-          />
-          <TouchableOpacity style={styles.customEntryInput} onPress={() => setAmountNumpadOpen(true)}>
-            <Text style={amountText ? styles.tableInputValue : styles.tableInputPlaceholder}>
-              {amountText ? `− ${amountText} €` : 'Rabattbetrag eingeben'}
-            </Text>
-          </TouchableOpacity>
-          <PriceNumpadDialog
-            visible={amountNumpadOpen}
-            value={amountText}
-            onChange={setAmountText}
-            onDone={() => setAmountNumpadOpen(false)}
-            styles={styles}
-          />
-          <TouchableOpacity
-            style={[styles.submitButton, !canConfirm && styles.submitButtonDisabled]}
-            onPress={handleConfirm}
-            disabled={!canConfirm}
-          >
-            <Text style={styles.submitButtonText}>Zum Warenkorb hinzufügen</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -1150,6 +1204,7 @@ function NoteDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   const [text, setText] = useState('');
 
   // Bei jeder neu geöffneten Warenkorb-Zeile die lokale Eingabe auf deren aktuellen
@@ -1167,23 +1222,23 @@ function NoteDialog({
     <Modal visible={line !== null} transparent animationType="fade" onRequestClose={onCancel}>
       <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Notiz</Text>
+          <Text style={styles.modalTitle}>{t('noteTitle')}</Text>
           <Text style={styles.modalSubtitle}>
             {line.nameHanzi} ({line.nameDe})
           </Text>
           <TextInput
             style={[styles.customEntryInput, styles.noteDialogInput]}
-            placeholder="z.B. ohne Zwiebeln"
+            placeholder={t('noteExample')}
             value={text}
             onChangeText={setText}
             multiline
             autoFocus
           />
           <TouchableOpacity style={styles.submitButton} onPress={() => onConfirm(text.trim())}>
-            <Text style={styles.submitButtonText}>Übernehmen</Text>
+            <Text style={styles.submitButtonText}>{t('apply')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -1209,6 +1264,7 @@ function PriceNumpadDialog({
   onDone: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   function press(key: (typeof PRICE_NUMPAD_KEYS)[number]) {
     if (key === 'back') {
       onChange(value.slice(0, -1));
@@ -1223,7 +1279,7 @@ function PriceNumpadDialog({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onDone}>
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Preis</Text>
+          <Text style={styles.modalTitle}>{t('priceTitle')}</Text>
           <Text style={styles.numpadDisplay}>{value ? `${value} €` : '—'}</Text>
           <View style={styles.numpadGrid}>
             {PRICE_NUMPAD_KEYS.map((key) => (
@@ -1233,7 +1289,7 @@ function PriceNumpadDialog({
             ))}
           </View>
           <TouchableOpacity style={styles.submitButton} onPress={onDone}>
-            <Text style={styles.submitButtonText}>Fertig</Text>
+            <Text style={styles.submitButtonText}>{t('done')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1264,6 +1320,7 @@ function ItemOptionsDialog({
   onCancel: () => void;
   styles: OrderStyles;
 }) {
+  const { t } = useI18n();
   const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null);
   const [extraQuantities, setExtraQuantities] = useState<Record<string, number>>({});
 
@@ -1338,7 +1395,7 @@ function ItemOptionsDialog({
 
           {item.extra_options && item.extra_options.length > 0 && (
             <View style={styles.optionsSection}>
-              <Text style={styles.optionsSectionTitle}>Extras</Text>
+              <Text style={styles.optionsSectionTitle}>{t('extras')}</Text>
               {item.extra_options.map((extra) => {
                 const qty = extraQuantities[extra.name_de] ?? 0;
                 return (
@@ -1377,11 +1434,11 @@ function ItemOptionsDialog({
             disabled={!canConfirm}
           >
             <Text style={styles.submitButtonText}>
-              {editing ? 'Änderungen übernehmen' : 'Zum Warenkorb hinzufügen'}
+              {editing ? t('applyChanges') : t('addToCart')}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.modalCancel} onPress={onCancel}>
-            <Text style={styles.modalCancelText}>Abbrechen</Text>
+            <Text style={styles.modalCancelText}>{t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1392,29 +1449,30 @@ function ItemOptionsDialog({
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     headerBackButton: { paddingHorizontal: 8, paddingVertical: 4 },
-    headerBackButtonText: { fontSize: 17, color: colors.primary },
-    container: { flex: 1, backgroundColor: colors.background, padding: 16 },
+    headerBackButtonText: { fontSize: 17, color: colors.accent, fontWeight: '600' },
+    container: { flex: 1, backgroundColor: colors.background },
+    content: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center', paddingHorizontal: 16, paddingVertical: 10 },
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
     errorText: { color: colors.danger },
     tableInput: {
-      borderWidth: 1,
-      borderColor: colors.borderStrong,
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      paddingVertical: 12,
-      marginBottom: 16,
-    },
-    tableInputValue: { fontSize: 16, color: colors.text, fontWeight: '600' },
-    tableInputPlaceholder: { fontSize: 16, color: colors.textFaint },
-    rabattButton: {
-      borderWidth: 1,
-      borderColor: colors.warning,
-      borderRadius: 8,
-      paddingVertical: 10,
+      flexDirection: 'row',
       alignItems: 'center',
-      marginBottom: 16,
+      justifyContent: 'center',
+      gap: 10,
+      backgroundColor: colors.surface,
+      borderWidth: 1.5,
+      borderColor: colors.borderStrong,
+      borderStyle: 'dashed',
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      marginBottom: 10,
     },
-    rabattButtonText: { fontSize: 15, fontWeight: '700', color: colors.warning },
+    tableInputFilled: { borderStyle: 'solid', borderColor: colors.accent, backgroundColor: colors.accentSurface },
+    tableInputEmoji: { fontSize: 20 },
+    tableInputValueLarge: { fontSize: 18, color: colors.accent, fontWeight: '800' },
+    tableInputValue: { fontSize: 16, color: colors.text, fontWeight: '600' },
+    tableInputPlaceholder: { fontSize: 16, color: colors.textMuted, fontWeight: '600' },
     numpadDisplay: {
       fontSize: 32,
       fontWeight: '700',
@@ -1432,55 +1490,95 @@ const createStyles = (colors: ThemeColors) =>
       width: '31%',
       aspectRatio: 1.4,
       backgroundColor: colors.surfaceAlt,
-      borderRadius: 10,
+      borderRadius: 14,
       alignItems: 'center',
       justifyContent: 'center',
       marginBottom: 10,
     },
     numpadKeyText: { fontSize: 22, fontWeight: '700', color: colors.text },
-    groupSection: { marginBottom: 20 },
-    groupTitle: { fontSize: 20, fontWeight: '700', marginBottom: 8, color: colors.text },
-    categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    categoryButton: {
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: 10,
-      paddingVertical: 14,
-      paddingHorizontal: 16,
-      minWidth: '30%',
-      alignItems: 'center',
+    categoryListContent: { paddingBottom: CATEGORY_LIST_PADDING_BOTTOM },
+    groupSection: { marginBottom: GROUP_SECTION_MARGIN },
+    groupTitle: {
+      fontSize: 17,
+      lineHeight: GROUP_TITLE_LINE_HEIGHT,
+      fontWeight: '800',
+      marginBottom: GROUP_TITLE_MARGIN,
+      color: colors.text,
+      textAlign: 'center',
     },
-    categoryHanzi: { fontSize: 16, fontWeight: '600', color: colors.text },
-    categoryDe: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+    categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: CATEGORY_GRID_GAP, justifyContent: 'center' },
+    categoryButton: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 12,
+      paddingHorizontal: 8,
+      width: '31%',
+      minHeight: CATEGORY_BUTTON_MAX_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: colors.shadow,
+      shadowOpacity: 0.06,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 2,
+    },
+    categoryEmoji: { fontSize: 32, marginBottom: 4 },
+    categoryHanzi: { fontSize: 16, fontWeight: '700', color: colors.text, textAlign: 'center' },
+    categoryDe: { fontSize: 12, color: colors.textMuted, marginTop: 1, textAlign: 'center' },
     // Deutlicher Abstand zum Screen-Header (dessen "← Hauptmenü"-Button sonst zu nah an
     // diesem "← Kategorien"-Button liegt und ständig aus Versehen getroffen wird).
     backButton: { marginTop: 20, marginBottom: 12, paddingVertical: 4 },
-    backButtonText: { fontSize: 16, color: colors.primary },
-    sectionTitle: { fontSize: 22, fontWeight: '700', marginBottom: 12, color: colors.text },
+    backButtonText: { fontSize: 16, color: colors.accent, fontWeight: '600' },
+    sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 },
+    sectionEmoji: { fontSize: 40 },
+    sectionTitle: { fontSize: 24, fontWeight: '800', color: colors.text },
+    sectionHanzi: { fontSize: 15, color: colors.textMuted, marginTop: 1 },
     itemRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
       paddingVertical: 14,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
+      paddingHorizontal: 14,
+      backgroundColor: colors.surface,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
     itemCodeBadge: {
-      backgroundColor: colors.border,
-      borderRadius: 6,
+      backgroundColor: colors.accentSurface,
+      borderRadius: 8,
       paddingHorizontal: 8,
       paddingVertical: 4,
       marginRight: 10,
       minWidth: 34,
       alignItems: 'center',
     },
-    itemCodeText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+    itemCodeText: { fontSize: 13, fontWeight: '800', color: colors.accent },
     itemRowText: { flex: 1, paddingRight: 8 },
     itemHanzi: { fontSize: 18, fontWeight: '600', color: colors.text },
     itemDe: { fontSize: 13, color: colors.textMuted },
-    itemPrice: { fontSize: 15, fontWeight: '600', color: colors.text },
+    itemPricePill: {
+      backgroundColor: colors.surfaceAlt,
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    itemPrice: { fontSize: 15, fontWeight: '700', color: colors.text },
+    itemAdd: { fontSize: 20, fontWeight: '700', color: colors.accent, marginLeft: 10 },
     cartPanel: {
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 14,
+      paddingBottom: 14,
+      shadowColor: colors.shadow,
+      shadowOpacity: 0.12,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: -4 },
+      elevation: 8,
     },
     cartHandle: {
       alignItems: 'center',
@@ -1494,14 +1592,16 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.borderStrong,
       marginBottom: 6,
     },
-    cartHandleText: { fontSize: 14, fontWeight: '600', color: colors.textSecondary },
+    cartHandleText: { fontSize: 15, fontWeight: '700', color: colors.textSecondary },
     cartItemsWrap: { overflow: 'hidden' },
     cartItemsList: { flex: 1 },
     cartLine: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      paddingVertical: 6,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.surfaceAlt,
     },
     cartLineTextWrap: { flex: 1, paddingRight: 8 },
     cartLineText: { fontSize: 15, color: colors.text },
@@ -1517,54 +1617,87 @@ const createStyles = (colors: ThemeColors) =>
       borderTopColor: colors.border,
     },
     cartTotalLabel: { fontSize: 16, fontWeight: '700', color: colors.text },
-    cartTotalValue: { fontSize: 18, fontWeight: '800', color: colors.text },
+    cartTotalValue: { fontSize: 20, fontWeight: '800', color: colors.accent },
     cartTotalNote: { fontSize: 12, color: colors.warning, marginTop: 2 },
     // Öffnet den NoteDialog statt direkt einzugeben (siehe NoteDialog-Kommentar) — sieht
     // wie ein Eingabefeld aus, ist aber nur ein Button.
     noteField: {
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 6,
+      borderRadius: 8,
       paddingHorizontal: 8,
       paddingVertical: 4,
       marginTop: 4,
     },
     noteFieldText: { fontSize: 13, color: colors.text },
+    // Schärfe-Leiste einer Warenkorb-Zeile (nur Hauptspeisen, siehe spiceableItemIds).
+    spiceBarRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+    spiceBarIcon: { fontSize: 15, marginRight: 6 },
+    spiceBar: {
+      flex: 1,
+      flexDirection: 'row',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 8,
+      overflow: 'hidden',
+    },
+    spiceSegment: { flex: 1, paddingVertical: 6, alignItems: 'center', justifyContent: 'center' },
+    spiceSegmentDivider: { borderLeftWidth: 1, borderLeftColor: colors.border },
+    spiceSegmentText: { fontSize: 12, color: colors.textSecondary },
+    spiceSegmentTextFilled: { color: '#fff', fontWeight: '700' },
     noteFieldPlaceholder: { fontSize: 13, color: colors.textFaint },
     // Stift-Button zum nachträglichen Ändern von Variante/Extras/Beschreibung einer
     // Warenkorb-Zeile (siehe handleEditCartLine) — nur sichtbar bei Items, die überhaupt
     // einen Dialog haben (isEditableMenuItem).
     cartLineEditButton: { paddingHorizontal: 8 },
     cartLineEditButtonText: { fontSize: 17, color: colors.textSecondary },
-    removeText: { fontSize: 20, color: colors.danger, paddingHorizontal: 12 },
+    removeText: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: colors.danger,
+      width: 34,
+      height: 34,
+      lineHeight: 32,
+      textAlign: 'center',
+      borderRadius: 17,
+      overflow: 'hidden',
+      backgroundColor: colors.surfaceAlt,
+      marginLeft: 6,
+    },
     customEntryInput: {
       fontSize: 16,
       color: colors.text,
       borderWidth: 1,
       borderColor: colors.borderStrong,
-      borderRadius: 8,
+      borderRadius: 12,
       paddingHorizontal: 12,
-      paddingVertical: 10,
+      paddingVertical: 12,
       marginBottom: 12,
     },
     noteDialogInput: { minHeight: 90, textAlignVertical: 'top' },
     submitButton: {
-      backgroundColor: '#16a34a',
-      borderRadius: 10,
-      paddingVertical: 14,
+      backgroundColor: colors.accent,
+      borderRadius: 14,
+      paddingVertical: 16,
       alignItems: 'center',
       marginTop: 8,
     },
     submitButtonDisabled: { backgroundColor: colors.textFaint },
-    submitButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+    submitButtonText: { color: colors.onAccent, fontSize: 17, fontWeight: '800' },
+    // Mittig unten statt in der rechten Ecke — passt zur zentrierten Inhaltsspalte.
     cartBarMini: {
       position: 'absolute',
       bottom: 24,
-      right: 20,
-      backgroundColor: '#16a34a',
-      borderRadius: 28,
-      paddingHorizontal: 24,
+      alignSelf: 'center',
+      backgroundColor: colors.accent,
+      borderRadius: 999,
+      paddingHorizontal: 26,
       paddingVertical: 16,
+      shadowColor: colors.shadow,
+      shadowOpacity: 0.25,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 8,
     },
     cartBarMiniText: { color: '#fff', fontWeight: '700', fontSize: 17 },
     modalOverlay: {
@@ -1576,16 +1709,17 @@ const createStyles = (colors: ThemeColors) =>
     },
     modalCard: {
       backgroundColor: colors.surface,
-      borderRadius: 14,
-      padding: 20,
+      borderRadius: 22,
+      padding: 22,
       width: '100%',
       maxWidth: 360,
     },
+    modalEmoji: { fontSize: 40, textAlign: 'center', marginBottom: 6 },
     modalTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center', color: colors.text },
     modalSubtitle: { fontSize: 14, color: colors.textMuted, textAlign: 'center', marginBottom: 16 },
     variantOption: {
       backgroundColor: colors.surfaceAlt,
-      borderRadius: 10,
+      borderRadius: 14,
       paddingVertical: 14,
       alignItems: 'center',
       marginBottom: 10,
@@ -1596,7 +1730,7 @@ const createStyles = (colors: ThemeColors) =>
     modalCancelText: { fontSize: 15, color: colors.danger },
     leaveConfirmButton: {
       backgroundColor: '#b91c1c',
-      borderRadius: 10,
+      borderRadius: 14,
       paddingVertical: 14,
       alignItems: 'center',
       marginTop: 4,
@@ -1608,13 +1742,13 @@ const createStyles = (colors: ThemeColors) =>
     variantChoice: {
       flex: 1,
       backgroundColor: colors.surfaceAlt,
-      borderRadius: 10,
+      borderRadius: 14,
       paddingVertical: 14,
       alignItems: 'center',
       borderWidth: 2,
       borderColor: 'transparent',
     },
-    variantChoiceActive: { backgroundColor: '#16a34a', borderColor: '#15803d' },
+    variantChoiceActive: { backgroundColor: colors.accent, borderColor: colors.accent },
     variantChoiceHanzi: { fontSize: 17, fontWeight: '600', color: colors.text },
     variantChoiceDe: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
     variantChoiceTextActive: { color: '#fff' },
@@ -1634,7 +1768,7 @@ const createStyles = (colors: ThemeColors) =>
       width: 32,
       height: 32,
       borderRadius: 16,
-      backgroundColor: colors.surfaceAlt,
+      backgroundColor: colors.accentSurface,
       alignItems: 'center',
       justifyContent: 'center',
     },

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "^7.3.15",
     "@react-navigation/native-stack": "^7.18.7",
@@ -29,7 +30,9 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:web": "expo export --platform web --clear",
+    "serve:web": "node scripts/serve-web.js"
   },
   "private": true
 }
